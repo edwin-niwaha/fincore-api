@@ -1,3 +1,4 @@
+from django.conf import settings
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -27,7 +28,7 @@ class JournalEntry(TimeStampedModel):
     branch = models.ForeignKey("institutions.Branch", null=True, blank=True, on_delete=models.PROTECT)
     reference = models.CharField(max_length=80, unique=True)
     description = models.TextField(blank=True)
-    posted_by = models.ForeignKey("users.User", null=True, blank=True, on_delete=models.SET_NULL)
+    posted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     posted_at = models.DateTimeField(auto_now_add=True)
 
     def clean(self):

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from apps.common.models import TimeStampedModel
 
@@ -10,4 +11,4 @@ class Transaction(TimeStampedModel):
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     reference = models.CharField(max_length=80, unique=True)
     description = models.TextField(blank=True)
-    created_by = models.ForeignKey("users.User", null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)

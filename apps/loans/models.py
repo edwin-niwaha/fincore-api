@@ -1,3 +1,4 @@
+from django.conf import settings
 from decimal import Decimal
 from django.db import models
 from apps.common.models import TimeStampedModel
@@ -29,7 +30,7 @@ class LoanApplication(TimeStampedModel):
     term_months = models.PositiveIntegerField()
     purpose = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    approved_by = models.ForeignKey("users.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_loans")
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="approved_loans")
     rejected_reason = models.TextField(blank=True)
     disbursed_at = models.DateTimeField(null=True, blank=True)
     principal_balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
@@ -49,4 +50,4 @@ class LoanRepayment(TimeStampedModel):
     principal_component = models.DecimalField(max_digits=14, decimal_places=2)
     interest_component = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     reference = models.CharField(max_length=80, unique=True)
-    received_by = models.ForeignKey("users.User", null=True, blank=True, on_delete=models.SET_NULL)
+    received_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)

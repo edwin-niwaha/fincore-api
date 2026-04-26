@@ -1,8 +1,9 @@
+from django.conf import settings
 from django.db import models
 from apps.common.models import StatusChoices, TimeStampedModel
 
 class Client(TimeStampedModel):
-    user = models.OneToOneField("users.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="client_profile")
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="client_profile")
     institution = models.ForeignKey("institutions.Institution", on_delete=models.PROTECT, related_name="clients")
     branch = models.ForeignKey("institutions.Branch", on_delete=models.PROTECT, related_name="clients")
     member_number = models.CharField(max_length=40, unique=True, blank=True)

@@ -20,21 +20,34 @@ from apps.notifications.views import NotificationViewSet
 from apps.reports.views import FinancialReportViewSet
 from apps.savings.views import SavingsAccountViewSet, SavingsTransactionViewSet
 from apps.transactions.views import TransactionViewSet
+
+# ✅ UPDATED USERS IMPORTS
 from apps.users.views import (
-    AuthLogoutView,
-    EmailOrUsernameTokenObtainPairView,
-    UserProfileView,
+    LoginView,
+    LogoutView,
+    MeView,
+    RegisterView,
     UserViewSet,
+    ForgotPasswordView,
+    ResetPasswordView,
+    ChangePasswordView,
+    SendEmailVerificationView,
+    VerifyEmailView,
+    GoogleLoginAPIView,
 )
 
 # Router
 router = DefaultRouter()
 
+# =========================
+# Core Modules
+# =========================
+
 # Institutions
 router.register("institutions", InstitutionViewSet, basename="institution")
 router.register("branches", BranchViewSet, basename="branch")
 
-# Users
+# Users (admin/staff management)
 router.register("users", UserViewSet, basename="user")
 
 # Clients
@@ -67,56 +80,41 @@ router.register("reports", FinancialReportViewSet, basename="report")
 
 
 urlpatterns = [
-    # =========================
-    # Authentication (JWT)
-    # =========================
-    path(
-        "auth/login/",
-        EmailOrUsernameTokenObtainPairView.as_view(),
-        name="auth-login",
-    ),
-    path(
-        "auth/refresh/",
-        TokenRefreshView.as_view(),
-        name="auth-refresh",
-    ),
-    path(
-        "auth/verify/",
-        TokenVerifyView.as_view(),
-        name="auth-verify",
-    ),
-    path(
-        "auth/logout/",
-        AuthLogoutView.as_view(),
-        name="auth-logout",
-    ),
-    path(
-        "auth/profile/",
-        UserProfileView.as_view(),
-        name="auth-profile",
-    ),
+    # =========================================
+    # AUTH (FinCore Clean Auth System)
+    # =========================================
 
-    # =========================
+    path("auth/register/", RegisterView.as_view(), name="auth-register"),
+    path("auth/login/", LoginView.as_view(), name="auth-login"),
+    path("auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("auth/me/", MeView.as_view(), name="auth-me"),
+
+    # JWT
+    path("auth/refresh/", TokenRefreshView.as_view(), name="auth-refresh"),
+    path("auth/verify/", TokenVerifyView.as_view(), name="auth-verify"),
+
+    # Password Management
+    path("auth/forgot-password/", ForgotPasswordView.as_view(), name="auth-forgot-password"),
+    path("auth/reset-password/", ResetPasswordView.as_view(), name="auth-reset-password"),
+    path("auth/change-password/", ChangePasswordView.as_view(), name="auth-change-password"),
+
+    # Email Verification
+    path("auth/send-email-verification/", SendEmailVerificationView.as_view(), name="auth-send-email-verification"),
+    path("auth/verify-email/", VerifyEmailView.as_view(), name="auth-verify-email"),
+
+    # Social Auth
+    path("auth/social/google/", GoogleLoginAPIView.as_view(), name="auth-google-login"),
+
+    # =========================================
     # Dashboards
-    # =========================
-    path(
-        "dashboards/client/",
-        ClientDashboardView.as_view(),
-        name="dashboard-client",
-    ),
-    path(
-        "dashboards/staff/",
-        StaffDashboardView.as_view(),
-        name="dashboard-staff",
-    ),
-    path(
-        "dashboards/admin/",
-        AdminDashboardView.as_view(),
-        name="dashboard-admin",
-    ),
+    # =========================================
+    path("dashboards/client/", ClientDashboardView.as_view(), name="dashboard-client"),
+    path("dashboards/staff/", StaffDashboardView.as_view(), name="dashboard-staff"),
+    path("dashboards/admin/", AdminDashboardView.as_view(), name="dashboard-admin"),
 
-    # =========================
-    # API Router
-    # =========================
+
+    # =========================================
+    # API ROUTER
+    # =========================================
     path("", include(router.urls)),
 ]

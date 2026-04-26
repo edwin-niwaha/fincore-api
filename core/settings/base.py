@@ -8,7 +8,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config("SECRET_KEY", default="unsafe-dev-key-change-me")
 DEBUG = config("DEBUG", default=False, cast=bool)
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="localhost,127.0.0.1",
+    cast=Csv(),
+)
+
 
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -25,6 +30,8 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "drf_spectacular",
+    "cloudinary",
+    "cloudinary_storage",
 ]
 
 LOCAL_APPS = [
@@ -44,6 +51,7 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -56,8 +64,10 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
 ROOT_URLCONF = "core.urls"
 WSGI_APPLICATION = "core.wsgi.application"
+
 
 TEMPLATES = [
     {
@@ -74,10 +84,8 @@ TEMPLATES = [
     }
 ]
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
-)
+
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
 
 USE_SQLITE = DATABASE_URL.startswith("sqlite")
 
@@ -90,23 +98,36 @@ DATABASES = {
     )
 }
 
-# 🚨 Enforce Postgres in production
 if not DEBUG and USE_SQLITE:
-    raise Exception("SQLite is not allowed in production. Use PostgreSQL.")
+    raise RuntimeError("SQLite is not allowed in production. Use PostgreSQL.")
 
-AUTH_USER_MODEL = "users.User"
+
+AUTH_USER_MODEL = "users.CustomUser"
+
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+    },
 ]
+
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Kampala"
 USE_I18N = True
 USE_TZ = True
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -114,7 +135,51 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+CLOUDINARY_CLOUD_NAME = config("CLOUDINARY_CLOUD_NAME", default="")
+CLOUDINARY_API_KEY = config("CLOUDINARY_API_KEY", default="")
+CLOUDINARY_API_SECRET = config("CLOUDINARY_API_SECRET", default="")
+ENABLE_CLOUDINARY = config("ENABLE_CLOUDINARY", default=not DEBUG, cast=bool)
+
+if ENABLE_CLOUDINARY:
+    if not all(
+        [
+            CLOUDINARY_CLOUD_NAME,
+            CLOUDINARY_API_KEY,
+            CLOUDINARY_API_SECRET,
+        ]
+    ):
+        raise RuntimeError(
+            "Cloudinary is enabled, but CLOUDINARY_CLOUD_NAME, "
+            "CLOUDINARY_API_KEY, or CLOUDINARY_API_SECRET is missing."
+        )
+
+    CLOUDINARY_STORAGE = {
+        "CLOUD_NAME": CLOUDINARY_CLOUD_NAME,
+        "API_KEY": CLOUDINARY_API_KEY,
+        "API_SECRET": CLOUDINARY_API_SECRET,
+    }
+
+    MEDIA_URL = f"https://res.cloudinary.com/{CLOUDINARY_CLOUD_NAME}/"
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
@@ -127,6 +192,7 @@ CSRF_TRUSTED_ORIGINS = config(
     default="http://localhost:3000,http://127.0.0.1:3000",
     cast=Csv(),
 )
+
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -151,8 +217,11 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": config("ANON_THROTTLE_RATE", default="100/hour"),
         "user": config("USER_THROTTLE_RATE", default="1000/hour"),
+        "auth_anon": config("AUTH_ANON_THROTTLE_RATE", default="20/hour"),
+        "auth_user": config("AUTH_USER_THROTTLE_RATE", default="60/hour"),
     },
 }
+
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(
@@ -166,24 +235,25 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "FinCore API",
-    "DESCRIPTION": "Microfinance/accounting MVP API for staff, admins, and client self-service users.",
+    "DESCRIPTION": (
+        "Microfinance/accounting MVP API for staff, admins, "
+        "and client self-service users."
+    ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-STORAGES = {
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
-}
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "handlers": {
-        "console": {"class": "logging.StreamHandler"},
+        "console": {
+            "class": "logging.StreamHandler",
+        },
     },
     "root": {
         "handlers": ["console"],

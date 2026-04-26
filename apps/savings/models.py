@@ -1,3 +1,4 @@
+from django.conf import settings
 from decimal import Decimal
 from django.db import models
 from apps.common.models import StatusChoices, TimeStampedModel
@@ -23,5 +24,5 @@ class SavingsTransaction(TimeStampedModel):
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     balance_after = models.DecimalField(max_digits=14, decimal_places=2)
     reference = models.CharField(max_length=80, unique=True)
-    performed_by = models.ForeignKey("users.User", null=True, blank=True, on_delete=models.SET_NULL)
+    performed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     notes = models.TextField(blank=True)
