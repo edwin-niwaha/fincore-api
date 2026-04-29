@@ -1,60 +1,46 @@
-# FinCore Platform
-
-FinCore is a production-oriented MVP for microfinance and accounting operations. It includes:
-
-- `fincore-api` — Django + Django REST Framework backend
-- `fincore-web` — Next.js + TypeScript internal dashboard
-
-The platform supports admin, staff, and client-facing workflows such as client onboarding, savings, loans, accounting, reports, dashboards, audit logs, and self-service APIs.
-
----
-
 # FinCore API
 
-`fincore-api` is the backend service for FinCore. It provides secure REST APIs for authentication, microfinance operations, accounting, dashboards, and reporting.
+`fincore-api` is the Django REST Framework backend for FinCore. It serves the microfinance MVP APIs for authentication, institutions, clients, savings, loans, accounting, transactions, dashboards, notifications, audit logs, and reports.
 
-## Core Features
+## Core routes
 
-- JWT authentication
-- Role-based access control
-- Institutions and branches
-- Client onboarding and KYC
-- Savings accounts
-- Deposits and withdrawals
-- Account statements
-- Loan products
-- Loan applications
-- Loan approvals and rejections
-- Loan disbursements
-- Repayment schedules
-- Loan repayments
-- Double-entry accounting foundation
-- Chart of accounts
-- Journal entries
-- Ledger foundation
-- Transactions
-- Notifications
-- Audit logs
-- Admin/staff dashboards
-- Reports
-- OpenAPI/Swagger documentation
+- API base path: `/api/v1/`
+- Health endpoint: `/api/v1/health/`
+- OpenAPI schema: `/api/v1/schema/`
+- Swagger UI: `/api/v1/docs/`
 
----
+Legacy `/api/schema/` and `/api/docs/` routes redirect to the canonical `/api/v1/` paths.
 
-## API Setup
+## Local setup
 
 ```bash
-git clone https://github.com/your-org/fincore-api.git
-cd fincore-api
-
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
 pip install -r requirements.txt
-
-cp .env.example .env
-
-python manage.py makemigrations
 python manage.py migrate
-python manage.py createsuperuser
 python manage.py runserver
+```
+
+Local development does not require a checked-in `.env` file. The default development settings can boot with SQLite, and you can optionally create a local `.env` from `.env.example` when you want to override defaults.
+
+## Docker development
+
+`docker-compose.yml` now provides safe development defaults directly, so it does not depend on a committed `.env` file.
+
+```bash
+docker compose up --build
+```
+
+## Production checklist
+
+- Set `DJANGO_SETTINGS_MODULE=core.settings.production`.
+- Provide a long random `SECRET_KEY`.
+- Point `DATABASE_URL` to PostgreSQL.
+- Set `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, and `CSRF_TRUSTED_ORIGINS` for the deployed domains.
+- Set `DEFAULT_FROM_EMAIL` and the production `EMAIL_BACKEND`.
+- Decide whether to enable Cloudinary with `ENABLE_CLOUDINARY=True`; if enabled, set all Cloudinary credentials.
+- Run `python manage.py migrate`.
+- Run `python manage.py collectstatic --noinput`.
+- Run `python manage.py check --deploy --settings=core.settings.production`.
+- Confirm `/api/v1/health/` returns HTTP 200 in the deployed environment.
+- Ensure `.env`, SQLite files, and other local-only artifacts are not committed.

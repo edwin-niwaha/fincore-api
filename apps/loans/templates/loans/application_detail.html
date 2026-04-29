@@ -1,0 +1,258 @@
+{% extends "loans/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Loan Detail</p>
+        <div class="hero-copy">
+            <div>
+                <div class="cluster" style="margin-bottom: 0.6rem;">
+                    <a class="button button-ghost" href="{% url 'loans_web:application-list' %}">Back to applications</a>
+                    <span class="pill {{ loan.status }}">{{ loan.status }}</span>
+                </div>
+                <h1>{{ loan.client_name }}</h1>
+                <p>
+                    {{ loan.client_member_number }} · {{ loan.product_name }} · {{ loan.branch_name }}
+                </p>
+            </div>
+            <div class="cluster">
+                {% if can_approve_or_reject %}
+                    <form method="post" action="{% url 'loans_web:application-approve' loan.id %}">
+                        {% csrf_token %}
+                        <button class="button button-primary" type="submit">Approve</button>
+                    </form>
+                {% endif %}
+                {% if can_disburse %}
+                    <a class="button button-teal" href="#disburse-panel">Disburse</a>
+                {% endif %}
+                {% if can_repay %}
+                    <a class="button button-amber" href="#repay-panel">Record repayment</a>
+                {% endif %}
+            </div>
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Requested Amount</span>
+                <span class="value">{{ loan.amount|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Principal Balance</span>
+                <span class="value">{{ loan.principal_balance|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Interest Balance</span>
+                <span class="value">{{ loan.interest_balance|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Total Outstanding</span>
+                <span class="value">{{ loan.outstanding_balance }}</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="card-grid">
+        <article class="panel stack">
+            <div>
+                <h2>Application context</h2>
+                <p class="muted">Core details for credit review and servicing.</p>
+            </div>
+            <div class="meta-list">
+                <div class="meta-row">
+                    <span class="muted">Product</span>
+                    <strong>{{ loan.product_name }} ({{ loan.product_code }})</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Institution</span>
+                    <strong>{{ loan.institution_name }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Term</span>
+                    <strong>{{ loan.term_months }} months</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Approved by</span>
+                    <strong>{{ loan.approved_by_email|default:"Not approved yet" }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Disbursed at</span>
+                    <strong>{{ loan.disbursed_at|date:"M j, Y H:i"|default:"Not disbursed" }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Purpose</span>
+                    <strong>{{ loan.purpose|default:"No purpose recorded" }}</strong>
+                </div>
+                {% if loan.rejected_reason %}
+                    <div class="meta-row">
+                        <span class="muted">Rejected reason</span>
+                        <strong>{{ loan.rejected_reason }}</strong>
+                    </div>
+                {% endif %}
+            </div>
+        </article>
+
+        <article class="panel stack">
+            <div>
+                <h2>Actions</h2>
+                <p class="muted">Only the buttons relevant to the current loan state are active.</p>
+            </div>
+            {% if can_approve_or_reject %}
+                <div class="cluster">
+                    <form method="post" action="{% url 'loans_web:application-approve' loan.id %}">
+                        {% csrf_token %}
+                        <button class="button button-primary" type="submit">Approve loan</button>
+                    </form>
+                </div>
+                <form method="post" action="{% url 'loans_web:application-reject' loan.id %}" class="form-grid">
+                    {% csrf_token %}
+                    <div class="field">
+                        <label for="reject-reason">Reject reason</label>
+                        <textarea id="reject-reason" name="reason" rows="3" placeholder="Optional but useful for audit">{{ reject_form.reason.value|default:'' }}</textarea>
+                        {% if reject_form.reason.errors %}
+                            <ul class="field-errors">
+                                {% for error in reject_form.reason.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="cluster">
+                        <button class="button button-rose" type="submit">Reject loan</button>
+                    </div>
+                </form>
+            {% elif can_disburse %}
+                <form id="disburse-panel" method="post" action="{% url 'loans_web:application-disburse' loan.id %}" class="form-grid">
+                    {% csrf_token %}
+                    <div class="field">
+                        <label for="disburse-reference">Disbursement reference</label>
+                        <input id="disburse-reference" type="text" name="reference" value="{{ disburse_form.reference.value|default:'' }}" placeholder="Cash voucher or disbursement reference">
+                        {% if disburse_form.reference.errors %}
+                            <ul class="field-errors">
+                                {% for error in disburse_form.reference.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="cluster">
+                        <button class="button button-teal" type="submit">Disburse loan</button>
+                    </div>
+                </form>
+            {% elif can_repay %}
+                <form id="repay-panel" method="post" action="{% url 'loans_web:application-repay' loan.id %}" class="form-grid">
+                    {% csrf_token %}
+                    <div class="field">
+                        <label for="repay-amount">Repayment amount</label>
+                        <input id="repay-amount" type="number" step="0.01" min="0.01" name="amount" value="{{ repayment_form.amount.value|default:'' }}" placeholder="0.00">
+                        {% if repayment_form.amount.errors %}
+                            <ul class="field-errors">
+                                {% for error in repayment_form.amount.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="repay-reference">Repayment reference</label>
+                        <input id="repay-reference" type="text" name="reference" value="{{ repayment_form.reference.value|default:'' }}" placeholder="Receipt or repayment reference">
+                        {% if repayment_form.reference.errors %}
+                            <ul class="field-errors">
+                                {% for error in repayment_form.reference.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="cluster">
+                        <button class="button button-amber" type="submit">Record repayment</button>
+                    </div>
+                </form>
+            {% else %}
+                <p class="muted">
+                    This loan is currently read-only for your role, or there is no next action
+                    available from its present status.
+                </p>
+            {% endif %}
+        </article>
+    </section>
+
+    <section class="panel stack" style="margin-top: 1.2rem;">
+        <div>
+            <h2>Repayment schedule</h2>
+            <p class="muted">Installment plan and live settlement progress for the loan.</p>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Due Date</th>
+                        <th>Principal Due</th>
+                        <th>Interest Due</th>
+                        <th>Total Due</th>
+                        <th>Paid</th>
+                        <th>Outstanding</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in schedule_rows %}
+                        <tr>
+                            <td>{{ row.due_date|date:"M j, Y" }}</td>
+                            <td>{{ row.principal_due|floatformat:2 }}</td>
+                            <td>{{ row.interest_due|floatformat:2 }}</td>
+                            <td>{{ row.total_due|floatformat:2 }}</td>
+                            <td>{{ row.paid_amount|floatformat:2 }}</td>
+                            <td>{{ row.outstanding_amount|floatformat:2 }}</td>
+                            <td>
+                                {% if row.is_paid %}
+                                    <span class="badge schedule-paid">paid</span>
+                                {% else %}
+                                    <span class="badge schedule-open">open</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="7" class="empty">The repayment schedule will appear here after disbursement.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel stack" style="margin-top: 1.2rem;">
+        <div>
+            <h2>Repayment history</h2>
+            <p class="muted">Cash received and how it was split between interest and principal.</p>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>When</th>
+                        <th>Reference</th>
+                        <th>Amount</th>
+                        <th>Principal</th>
+                        <th>Interest</th>
+                        <th>Received By</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for repayment in repayment_rows %}
+                        <tr>
+                            <td>{{ repayment.created_at|date:"M j, Y H:i" }}</td>
+                            <td><strong>{{ repayment.reference }}</strong></td>
+                            <td>{{ repayment.amount|floatformat:2 }}</td>
+                            <td>{{ repayment.principal_component|floatformat:2 }}</td>
+                            <td>{{ repayment.interest_component|floatformat:2 }}</td>
+                            <td>{{ repayment.received_by.email|default:"System" }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="6" class="empty">No repayments have been recorded yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+{% endblock %}

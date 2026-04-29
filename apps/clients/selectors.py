@@ -1,11 +1,28 @@
+from apps.users.models import CustomUser
+
+from .models import Client
+
+
 def clients_for_user(user):
-    qs = __import__('apps.clients.models', fromlist=['Client']).Client.objects.select_related('institution', 'branch', 'user')
-    if user.role == 'client':
-        return qs.filter(user=user)
-    if user.role == 'super_admin':
-        return qs
+    queryset = Client.objects.select_related("institution", "branch", "user").order_by(
+        "member_number",
+        "last_name",
+        "first_name",
+    )
+
+    if not user or not user.is_authenticated:
+        return queryset.none()
+
+    if user.role == CustomUser.Role.CLIENT:
+        return queryset.filter(user=user)
+
+    if user.role == CustomUser.Role.SUPER_ADMIN:
+        return queryset
+
     if user.branch_id:
-        return qs.filter(branch=user.branch)
+        return queryset.filter(branch=user.branch)
+
     if user.institution_id:
-        return qs.filter(institution=user.institution)
-    return qs.none()
+        return queryset.filter(institution=user.institution)
+
+    return queryset.none()

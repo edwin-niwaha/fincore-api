@@ -1,9 +1,11 @@
 asgiref==3.11.1
 attrs==26.1.0
+cloudinary==1.44.2
 colorama==0.4.6
 coverage==7.13.5
 dj-database-url==2.3.0
 Django==6.0.4
+django-cloudinary-storage==0.3.0
 django-cors-headers==4.9.0
 django-filter==25.2
 djangorestframework==3.17.1
@@ -24,6 +26,7 @@ pytest==8.4.2
 pytest-django==4.12.0
 python-decouple==3.8
 PyYAML==6.0.3
+requests==2.33.1
 referencing==0.37.0
 rpds-py==0.30.0
 ruff==0.15.12

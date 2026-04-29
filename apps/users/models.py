@@ -95,7 +95,6 @@ class CustomUser(AbstractUser):
             "quality": "auto",
             "fetch_format": "auto",
         },
-        default="default.jpg",
         blank=True,
         null=True,
     )

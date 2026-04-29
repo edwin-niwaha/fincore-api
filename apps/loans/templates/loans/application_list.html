@@ -1,0 +1,126 @@
+{% extends "loans/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Origination Queue</p>
+        <div class="hero-copy">
+            <div>
+                <h1>Applications across the loan lifecycle</h1>
+                <p>
+                    Track what is still awaiting credit review, what is ready for cash desk
+                    disbursement, and what remains outstanding in the portfolio.
+                </p>
+            </div>
+            <div class="cluster">
+                <span class="pill">{{ summary.application_count }} application{{ summary.application_count|pluralize }}</span>
+                <span class="pill pending">{{ summary.pending_count }} pending</span>
+                <span class="pill disbursed">{{ summary.disbursed_count }} disbursed</span>
+            </div>
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Applications</span>
+                <span class="value">{{ summary.application_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Pending Review</span>
+                <span class="value">{{ summary.pending_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Outstanding Principal</span>
+                <span class="value">{{ summary.outstanding_principal|floatformat:2 }}</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel stack">
+        <div>
+            <h2>Filter applications</h2>
+            <p class="muted">Search by member, product, or purpose, and optionally focus on one status.</p>
+        </div>
+        <form method="get" class="search-row">
+            <div class="field">
+                <label for="search">Search</label>
+                <input id="search" type="search" name="q" value="{{ search_query }}" placeholder="Try MAIN-000001 or Working Capital">
+            </div>
+            <div class="field">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                    <option value="">All statuses</option>
+                    {% for value, label in status_options %}
+                        <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="button button-primary" type="submit">Apply</button>
+        </form>
+    </section>
+
+    <section class="card-grid" style="margin-top: 1.2rem;">
+        {% for loan in loans %}
+            <article class="panel stack">
+                <div class="cluster" style="justify-content: space-between;">
+                    <span class="pill {{ loan.status }}">{{ loan.status }}</span>
+                    <span class="muted">{{ loan.product_name }}</span>
+                </div>
+                <div>
+                    <h2>{{ loan.client_name }}</h2>
+                    <p class="muted" style="margin: 0.45rem 0 0;">{{ loan.client_member_number }} · {{ loan.branch_name }}</p>
+                </div>
+                <div class="meta-list">
+                    <div class="meta-row">
+                        <span class="muted">Requested</span>
+                        <strong>{{ loan.amount|floatformat:2 }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Term</span>
+                        <strong>{{ loan.term_months }} months</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Outstanding</span>
+                        <strong>{{ loan.outstanding_balance }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Repayments</span>
+                        <strong>{{ loan.repayment_count }}</strong>
+                    </div>
+                </div>
+                <div class="cluster">
+                    <a class="button button-ghost" href="{% url 'loans_web:application-detail' loan.id %}">Open detail</a>
+                    {% if loan.status == "pending" %}
+                        <span class="button button-amber" style="pointer-events: none;">Approve or reject</span>
+                    {% elif loan.status == "approved" %}
+                        <span class="button button-teal" style="pointer-events: none;">Ready to disburse</span>
+                    {% elif loan.status == "disbursed" %}
+                        <span class="button button-primary" style="pointer-events: none;">Repayment active</span>
+                    {% endif %}
+                </div>
+            </article>
+        {% empty %}
+            <section class="panel empty">
+                <h2>No applications found</h2>
+                <p>
+                    {% if search_query or status_filter %}
+                        No applications matched the current filters.
+                    {% else %}
+                        Loan applications will appear here once origination starts.
+                    {% endif %}
+                </p>
+            </section>
+        {% endfor %}
+    </section>
+
+    {% if is_paginated %}
+        <div class="cluster" style="justify-content: space-between; margin-top: 1rem;">
+            <span class="muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            <div class="cluster">
+                {% if page_obj.has_previous %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}{% if status_filter %}status={{ status_filter|urlencode }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}{% if status_filter %}status={{ status_filter|urlencode }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

@@ -1,33 +1,27 @@
 from django.contrib.auth import get_user_model, password_validation
 from django.db import transaction
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
+from .access import (
+    can_manage_role,
+    infer_user_type,
+    role_requires_branch,
+    role_requires_institution,
+)
 from .services import authenticate_user, normalize_email, register_user
 
 User = get_user_model()
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserReadSerializerMixin(serializers.ModelSerializer):
     avatar_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = User
-        fields = (
-            "id",
-            "email",
-            "username",
-            "first_name",
-            "last_name",
-            "phone",
-            "avatar_url",
-            "role",
-            "institution",
-            "branch",
-            "is_active",
-            "is_email_verified",
-            "created_at",
-        )
-        read_only_fields = fields
+    full_name = serializers.SerializerMethodField()
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    institution_name = serializers.CharField(source="institution.name", read_only=True)
+    institution_code = serializers.CharField(source="institution.code", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_code = serializers.CharField(source="branch.code", read_only=True)
 
     def get_avatar_url(self, obj):
         if not getattr(obj, "avatar", None):
@@ -37,8 +31,42 @@ class UserSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_full_name(self, obj):
+        full_name = obj.get_full_name().strip()
+        if full_name:
+            return full_name
+        return obj.username or obj.email
 
-class UserAdminSerializer(serializers.ModelSerializer):
+
+class UserSerializer(UserReadSerializerMixin):
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "username",
+            "first_name",
+            "last_name",
+            "full_name",
+            "phone",
+            "avatar_url",
+            "role",
+            "role_display",
+            "institution",
+            "institution_name",
+            "institution_code",
+            "branch",
+            "branch_name",
+            "branch_code",
+            "is_active",
+            "is_email_verified",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class UserAdminSerializer(UserReadSerializerMixin):
     password = serializers.CharField(write_only=True, required=False, min_length=8)
 
     class Meta:
@@ -49,16 +77,36 @@ class UserAdminSerializer(serializers.ModelSerializer):
             "username",
             "first_name",
             "last_name",
+            "full_name",
             "phone",
+            "avatar_url",
             "role",
+            "role_display",
             "institution",
+            "institution_name",
+            "institution_code",
             "branch",
+            "branch_name",
+            "branch_code",
             "is_active",
             "is_email_verified",
             "password",
             "created_at",
+            "updated_at",
         )
-        read_only_fields = ("id", "created_at", "is_email_verified")
+        read_only_fields = (
+            "id",
+            "full_name",
+            "avatar_url",
+            "role_display",
+            "institution_name",
+            "institution_code",
+            "branch_name",
+            "branch_code",
+            "created_at",
+            "updated_at",
+            "is_email_verified",
+        )
 
     def validate_email(self, value):
         email = normalize_email(value)
@@ -71,12 +119,88 @@ class UserAdminSerializer(serializers.ModelSerializer):
 
     def validate_username(self, value):
         username = value.strip()
+        if not username:
+            raise serializers.ValidationError("Username is required.")
         qs = User.objects.filter(username__iexact=username)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("This username is already taken.")
         return username
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+        role = attrs.get("role") or getattr(self.instance, "role", User.Role.CLIENT)
+        institution = attrs.get("institution", getattr(self.instance, "institution", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+
+        if actor and actor.is_authenticated and not can_manage_role(actor, role):
+            raise PermissionDenied("You cannot assign that role.")
+
+        if branch and not institution:
+            institution = branch.institution
+            attrs["institution"] = institution
+
+        actor_role = getattr(actor, "role", None)
+        if actor and actor.is_authenticated and actor_role == User.Role.INSTITUTION_ADMIN:
+            if not actor.institution_id:
+                raise PermissionDenied("Your account is not assigned to an institution.")
+
+            if role_requires_institution(role) and not institution:
+                institution = actor.institution
+                attrs["institution"] = institution
+            elif institution and institution.pk != actor.institution_id:
+                raise PermissionDenied("You can only manage users in your institution.")
+
+            if branch and branch.institution_id != actor.institution_id:
+                raise PermissionDenied("You can only assign branches in your institution.")
+
+        if actor and actor.is_authenticated and actor_role == User.Role.BRANCH_MANAGER:
+            if not actor.institution_id or not actor.branch_id:
+                raise PermissionDenied("Your account is not assigned to a branch.")
+
+            if role_requires_institution(role) and not institution:
+                institution = actor.institution
+                attrs["institution"] = institution
+            elif institution and institution.pk != actor.institution_id:
+                raise PermissionDenied("You can only manage users in your institution.")
+
+            if not branch:
+                branch = actor.branch
+                attrs["branch"] = branch
+            elif branch.pk != actor.branch_id:
+                raise PermissionDenied("You can only manage users in your branch.")
+
+        if role == User.Role.SUPER_ADMIN:
+            attrs["institution"] = None
+            attrs["branch"] = None
+            return attrs
+
+        if role == User.Role.INSTITUTION_ADMIN:
+            attrs["branch"] = None
+            branch = None
+
+        if role_requires_institution(role) and not institution:
+            raise serializers.ValidationError(
+                {"institution": ["Institution is required for this role."]}
+            )
+
+        if role_requires_branch(role) and not branch:
+            raise serializers.ValidationError(
+                {"branch": ["Branch is required for this role."]}
+            )
+
+        if branch and institution and branch.institution_id != institution.id:
+            raise serializers.ValidationError(
+                {"branch": ["Selected branch does not belong to the chosen institution."]}
+            )
+
+        return attrs
+
+    def _apply_role_defaults(self, user):
+        user.user_type = infer_user_type(user.role)
+        return user
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)
@@ -86,6 +210,7 @@ class UserAdminSerializer(serializers.ModelSerializer):
             user.set_password(password)
         else:
             user.set_unusable_password()
+        self._apply_role_defaults(user)
         user.save()
         return user
 
@@ -99,13 +224,12 @@ class UserAdminSerializer(serializers.ModelSerializer):
             password_validation.validate_password(password, instance)
             instance.set_password(password)
 
+        self._apply_role_defaults(instance)
         instance.save()
         return instance
 
 
-class ProfileSerializer(serializers.ModelSerializer):
-    avatar_url = serializers.SerializerMethodField()
-
+class ProfileSerializer(UserReadSerializerMixin):
     class Meta:
         model = User
         fields = (
@@ -114,34 +238,40 @@ class ProfileSerializer(serializers.ModelSerializer):
             "username",
             "first_name",
             "last_name",
+            "full_name",
             "phone",
             "avatar",
             "avatar_url",
             "role",
+            "role_display",
             "institution",
+            "institution_name",
+            "institution_code",
             "branch",
+            "branch_name",
+            "branch_code",
             "is_email_verified",
         )
         read_only_fields = (
             "id",
             "email",
             "role",
+            "role_display",
             "institution",
+            "institution_name",
+            "institution_code",
             "branch",
+            "branch_name",
+            "branch_code",
             "is_email_verified",
             "avatar_url",
+            "full_name",
         )
-
-    def get_avatar_url(self, obj):
-        if not getattr(obj, "avatar", None):
-            return None
-        try:
-            return obj.avatar.url
-        except Exception:
-            return None
 
     def validate_username(self, value):
         username = value.strip()
+        if not username:
+            raise serializers.ValidationError("Username is required.")
         qs = User.objects.filter(username__iexact=username).exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("This username is already taken.")
@@ -254,7 +384,11 @@ class ResetPasswordSerializer(serializers.Serializer):
 class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, trim_whitespace=False)
     new_password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
-    new_password_confirm = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+    new_password_confirm = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        trim_whitespace=False,
+    )
 
     def validate(self, attrs):
         if attrs["new_password"] != attrs["new_password_confirm"]:

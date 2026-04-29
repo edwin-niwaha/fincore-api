@@ -1,0 +1,109 @@
+{% extends "loans/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Product Shelf</p>
+        <div class="hero-copy">
+            <div>
+                <h1>Loan products ready for origination</h1>
+                <p>
+                    Review pricing bands, term windows, and how much room each product gives your
+                    branch teams before you move into application handling.
+                </p>
+            </div>
+            <div class="cluster">
+                <span class="pill">{{ summary.product_count }} product{{ summary.product_count|pluralize }}</span>
+                <span class="pill">{{ summary.active_count }} active</span>
+            </div>
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Products</span>
+                <span class="value">{{ summary.product_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Active Products</span>
+                <span class="value">{{ summary.active_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Portfolio Ceiling</span>
+                <span class="value">{{ summary.portfolio_ceiling|floatformat:2 }}</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel stack">
+        <div>
+            <h2>Find a product</h2>
+            <p class="muted">Search by product name, code, or institution.</p>
+        </div>
+        <form method="get" class="search-row">
+            <div class="field">
+                <label for="search">Search</label>
+                <input id="search" type="search" name="q" value="{{ search_query }}" placeholder="Try working-capital or Alpha SACCO">
+            </div>
+            <div></div>
+            <button class="button button-primary" type="submit">Search</button>
+        </form>
+    </section>
+
+    <section class="card-grid" style="margin-top: 1.2rem;">
+        {% for product in products %}
+            <article class="panel stack">
+                <div class="cluster" style="justify-content: space-between;">
+                    <span class="pill {% if product.is_active %}approved{% else %}rejected{% endif %}">
+                        {% if product.is_active %}active{% else %}inactive{% endif %}
+                    </span>
+                    <span class="muted">{{ product.application_count }} application{{ product.application_count|pluralize }}</span>
+                </div>
+                <div>
+                    <h2>{{ product.name }}</h2>
+                    <p class="muted" style="margin: 0.45rem 0 0;">{{ product.code }} · {{ product.institution_name }}</p>
+                </div>
+                <div class="meta-list">
+                    <div class="meta-row">
+                        <span class="muted">Amount band</span>
+                        <strong>{{ product.min_amount|floatformat:2 }} to {{ product.max_amount|floatformat:2 }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Annual rate</span>
+                        <strong>{{ product.annual_interest_rate|floatformat:2 }}%</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Term range</span>
+                        <strong>{{ product.min_term_months }} to {{ product.max_term_months }} months</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Requested volume</span>
+                        <strong>{{ product.total_requested_amount }}</strong>
+                    </div>
+                </div>
+            </article>
+        {% empty %}
+            <section class="panel empty">
+                <h2>No loan products found</h2>
+                <p>
+                    {% if search_query %}
+                        No products matched “{{ search_query }}”.
+                    {% else %}
+                        Loan products will appear here once they are configured.
+                    {% endif %}
+                </p>
+            </section>
+        {% endfor %}
+    </section>
+
+    {% if is_paginated %}
+        <div class="cluster" style="justify-content: space-between; margin-top: 1rem;">
+            <span class="muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            <div class="cluster">
+                {% if page_obj.has_previous %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

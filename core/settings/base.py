@@ -1,12 +1,15 @@
 from datetime import timedelta
 from pathlib import Path
-import os
+
 import dj_database_url
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = config("SECRET_KEY", default="unsafe-dev-key-change-me")
+SECRET_KEY = config(
+    "SECRET_KEY",
+    default="unsafe-dev-secret-key-change-me-please-123456",
+)
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config(
     "ALLOWED_HOSTS",
@@ -66,6 +69,7 @@ MIDDLEWARE = [
 
 
 ROOT_URLCONF = "core.urls"
+ASGI_APPLICATION = "core.asgi.application"
 WSGI_APPLICATION = "core.wsgi.application"
 
 
@@ -85,7 +89,7 @@ TEMPLATES = [
 ]
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
+DATABASE_URL = config("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
 
 USE_SQLITE = DATABASE_URL.startswith("sqlite")
 
@@ -97,9 +101,6 @@ DATABASES = {
         ssl_require=not USE_SQLITE and not DEBUG,
     )
 }
-
-if not DEBUG and USE_SQLITE:
-    raise RuntimeError("SQLite is not allowed in production. Use PostgreSQL.")
 
 
 AUTH_USER_MODEL = "users.CustomUser"
@@ -127,19 +128,25 @@ USE_I18N = True
 USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+DEFAULT_PAGE_SIZE = config("DEFAULT_PAGE_SIZE", default=20, cast=int)
+MAX_PAGE_SIZE = config("MAX_PAGE_SIZE", default=100, cast=int)
 
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="no-reply@fincore.local")
+SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
 
 
 CLOUDINARY_CLOUD_NAME = config("CLOUDINARY_CLOUD_NAME", default="")
 CLOUDINARY_API_KEY = config("CLOUDINARY_API_KEY", default="")
 CLOUDINARY_API_SECRET = config("CLOUDINARY_API_SECRET", default="")
-ENABLE_CLOUDINARY = config("ENABLE_CLOUDINARY", default=not DEBUG, cast=bool)
+ENABLE_CLOUDINARY = config("ENABLE_CLOUDINARY", default=False, cast=bool)
 
 if ENABLE_CLOUDINARY:
     if not all(
@@ -208,7 +215,7 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.StandardResultsSetPagination",
-    "PAGE_SIZE": config("DEFAULT_PAGE_SIZE", default=20, cast=int),
+    "PAGE_SIZE": DEFAULT_PAGE_SIZE,
     "EXCEPTION_HANDLER": "apps.common.exceptions.custom_exception_handler",
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",

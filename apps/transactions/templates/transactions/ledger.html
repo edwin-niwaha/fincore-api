@@ -1,0 +1,215 @@
+{% extends "transactions/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Read-only Ledger</p>
+        <div class="hero-copy">
+            <div>
+                <h1>Transaction ledger with export-ready detail</h1>
+                <p class="muted">
+                    Filter by member, branch, institution, category, direction, and date window,
+                    then open any row in the side drawer for clean review or print-to-PDF export.
+                </p>
+            </div>
+            <div class="cluster no-print">
+                <span class="pill">Print / PDF ready</span>
+                <button class="button button-print" type="button" onclick="window.print()">Print view</button>
+            </div>
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Rows</span>
+                <span class="value">{{ summary.row_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Credits</span>
+                <span class="value">{{ summary.total_credits|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Debits</span>
+                <span class="value">{{ summary.total_debits|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Net Flow</span>
+                <span class="value">{{ summary.net_flow|floatformat:2 }}</span>
+            </div>
+        </div>
+        <p class="muted" style="margin-top: 1rem;">Generated {{ generated_at|date:"M j, Y H:i" }}</p>
+    </section>
+
+    <section class="panel no-print" style="margin-bottom: 1rem;">
+        <div class="cluster" style="justify-content: space-between; margin-bottom: 0.9rem;">
+            <div>
+                <h2>Filters</h2>
+                <p class="muted">The ledger stays read-only while giving you narrow, audit-friendly slices.</p>
+            </div>
+            {% if base_querystring %}
+                <a class="button button-ghost" href="{% url 'transactions_web:ledger' %}">Clear filters</a>
+            {% endif %}
+        </div>
+        <form method="get" class="filter-grid">
+            <div class="field">
+                <label for="id_q">Search</label>
+                {{ filter_form.q }}
+            </div>
+            <div class="field">
+                <label for="id_institution">Institution</label>
+                {{ filter_form.institution }}
+            </div>
+            <div class="field">
+                <label for="id_branch">Branch</label>
+                {{ filter_form.branch }}
+            </div>
+            <div class="field">
+                <label for="id_client">Client</label>
+                {{ filter_form.client }}
+            </div>
+            <div class="field">
+                <label for="id_category">Category</label>
+                {{ filter_form.category }}
+            </div>
+            <div class="field">
+                <label for="id_direction">Direction</label>
+                {{ filter_form.direction }}
+            </div>
+            <div class="field">
+                <label for="id_date_from">Date from</label>
+                {{ filter_form.date_from }}
+            </div>
+            <div class="field">
+                <label for="id_date_to">Date to</label>
+                {{ filter_form.date_to }}
+            </div>
+            <div class="field">
+                <label>&nbsp;</label>
+                <button class="button button-primary" type="submit">Apply filters</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="ledger-layout {% if selected_transaction %}has-drawer{% endif %}">
+        <article class="panel">
+            <div class="cluster" style="justify-content: space-between; margin-bottom: 0.9rem;">
+                <div>
+                    <h2>Transactions table</h2>
+                    <p class="muted">Ordered newest first so the latest teller and loan activity is easy to inspect.</p>
+                </div>
+                <span class="pill">{{ transactions.paginator.count|default:summary.row_count }} visible</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Reference</th>
+                            <th>Client</th>
+                            <th>Branch</th>
+                            <th>Category</th>
+                            <th>Direction</th>
+                            <th>Amount</th>
+                            <th class="no-print">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for transaction in transactions %}
+                            <tr>
+                                <td>{{ transaction.created_at|date:"Y-m-d H:i" }}</td>
+                                <td class="monospace">{{ transaction.reference }}</td>
+                                <td>
+                                    {% if transaction.client_id %}
+                                        {{ transaction.client.member_number }}<br>
+                                        <span class="muted">{{ transaction.client.first_name }} {{ transaction.client.last_name }}</span>
+                                    {% else %}
+                                        <span class="muted">No client linked</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ transaction.branch.name }}</td>
+                                <td>{{ transaction.category_label }}</td>
+                                <td><span class="badge {{ transaction.direction }}">{{ transaction.get_direction_display }}</span></td>
+                                <td class="monospace">{{ transaction.amount|floatformat:2 }}</td>
+                                <td class="no-print">
+                                    <a class="button button-ghost" href="?{% if base_querystring %}{{ base_querystring }}&amp;{% endif %}selected={{ transaction.id }}">View</a>
+                                </td>
+                            </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="8" class="empty">No transactions matched the current ledger filters.</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if is_paginated %}
+                <div class="cluster no-print" style="justify-content: space-between; margin-top: 1rem;">
+                    <span class="muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                    <div class="cluster">
+                        {% if page_obj.has_previous %}
+                            <a class="button button-ghost" href="?{% if base_querystring %}{{ base_querystring }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                        {% endif %}
+                        {% if page_obj.has_next %}
+                            <a class="button button-ghost" href="?{% if base_querystring %}{{ base_querystring }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endif %}
+        </article>
+
+        {% if selected_transaction %}
+            <aside class="drawer">
+                <div class="cluster no-print" style="justify-content: space-between; margin-bottom: 0.85rem;">
+                    <div>
+                        <p class="eyebrow">Detail Drawer</p>
+                        <h2>{{ selected_transaction.reference }}</h2>
+                    </div>
+                    <a class="button button-ghost" href="{% url 'transactions_web:ledger' %}{% if base_querystring %}?{{ base_querystring }}{% endif %}">Close</a>
+                </div>
+                <div class="meta-list">
+                    <div class="meta-row">
+                        <span class="muted">Category</span>
+                        <strong>{{ selected_transaction.category_label }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Direction</span>
+                        <strong>{{ selected_transaction.get_direction_display }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Amount</span>
+                        <strong class="monospace">{{ selected_transaction.amount|floatformat:2 }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Institution</span>
+                        <strong>{{ selected_transaction.institution.name }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Branch</span>
+                        <strong>{{ selected_transaction.branch.name }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Client</span>
+                        <strong>
+                            {% if selected_transaction.client_id %}
+                                {{ selected_transaction.client.member_number }}<br>
+                                {{ selected_transaction.client.first_name }} {{ selected_transaction.client.last_name }}
+                            {% else %}
+                                No client linked
+                            {% endif %}
+                        </strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Recorded by</span>
+                        <strong>{{ selected_transaction.created_by.email|default:"System" }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Created at</span>
+                        <strong>{{ selected_transaction.created_at|date:"Y-m-d H:i" }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Description</span>
+                        <strong>{{ selected_transaction.description|default:"No description" }}</strong>
+                    </div>
+                </div>
+            </aside>
+        {% endif %}
+    </section>
+{% endblock %}

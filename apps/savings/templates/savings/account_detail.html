@@ -1,0 +1,239 @@
+{% extends "savings/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Savings Account</p>
+        <div class="hero-copy">
+            <div>
+                <div class="cluster" style="margin-bottom: 0.6rem;">
+                    <a class="button button-ghost" href="{% url 'savings_web:account-list' %}">Back to list</a>
+                    <span class="pill {{ account.status }}">{{ account.status }}</span>
+                </div>
+                <h1>{{ account.account_number }}</h1>
+                <p>
+                    {{ account.client_name }} · {{ account.client_member_number }} ·
+                    {{ account.branch_name }}, {{ account.institution_name }}
+                </p>
+            </div>
+            {% if can_manage_cash and account.status == "active" %}
+                <div class="cluster">
+                    <button class="button button-primary" type="button" data-dialog-open="deposit-modal">New deposit</button>
+                    <button class="button button-warm" type="button" data-dialog-open="withdraw-modal">New withdrawal</button>
+                </div>
+            {% endif %}
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Current Balance</span>
+                <span class="value">{{ account.balance|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Transactions</span>
+                <span class="value">{{ account.transaction_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Opened</span>
+                <span class="value" style="font-size: 1.3rem;">{{ account.created_at|date:"M j, Y" }}</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="card-grid">
+        <article class="panel stack">
+            <div>
+                <h2>Account context</h2>
+                <p class="muted">A quick operational snapshot for the member and branch team.</p>
+            </div>
+            <div class="meta-list">
+                <div class="meta-row">
+                    <span class="muted">Member</span>
+                    <strong>{{ account.client_name }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Member number</span>
+                    <strong>{{ account.client_member_number }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Institution</span>
+                    <strong>{{ account.institution_name }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Branch</span>
+                    <strong>{{ account.branch_name }}</strong>
+                </div>
+                <div class="meta-row">
+                    <span class="muted">Last transaction</span>
+                    <strong>
+                        {% if account.last_transaction_at %}
+                            {{ account.last_transaction_at|date:"M j, Y H:i" }}
+                        {% else %}
+                            No activity yet
+                        {% endif %}
+                    </strong>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel stack">
+            <div>
+                <h2>Cash desk controls</h2>
+                <p class="muted">Post teller activity directly against this account from a focused workspace.</p>
+            </div>
+            {% if can_manage_cash and account.status == "active" %}
+                <div class="cluster">
+                    <button class="button button-primary" type="button" data-dialog-open="deposit-modal">Open deposit modal</button>
+                    <button class="button button-warm" type="button" data-dialog-open="withdraw-modal">Open withdrawal modal</button>
+                </div>
+            {% elif can_manage_cash %}
+                <p class="muted">This account is not active, so deposits and withdrawals are currently locked.</p>
+            {% else %}
+                <p class="muted">You can review history here, but cash actions are restricted to teller and finance roles.</p>
+            {% endif %}
+        </article>
+    </section>
+
+    <section class="panel stack" style="margin-top: 1.2rem;">
+        <div>
+            <h2>Transaction history</h2>
+            <p class="muted">Every deposit and withdrawal recorded for this savings account.</p>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Balance After</th>
+                        <th>Reference</th>
+                        <th>Performed By</th>
+                        <th>When</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transaction in transaction_history %}
+                        <tr>
+                            <td><span class="badge {{ transaction.type }}">{{ transaction.get_type_display }}</span></td>
+                            <td>{{ transaction.amount|floatformat:2 }}</td>
+                            <td>{{ transaction.balance_after|floatformat:2 }}</td>
+                            <td><strong>{{ transaction.reference }}</strong></td>
+                            <td>{{ transaction.performed_by.email|default:"System" }}</td>
+                            <td>{{ transaction.created_at|date:"M j, Y H:i" }}</td>
+                            <td>{{ transaction.notes|default:"-" }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="7" class="empty">No savings transactions have been recorded for this account yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    {% if can_manage_cash %}
+        <dialog id="deposit-modal" {% if active_modal == "deposit" %}open{% endif %}>
+            <div class="modal-header cluster" style="justify-content: space-between; align-items: start;">
+                <div>
+                    <p class="eyebrow">Deposit</p>
+                    <h2>Post a deposit</h2>
+                </div>
+                <button class="modal-close" type="button" data-dialog-close>Close</button>
+            </div>
+            <form method="post" action="{% url 'savings_web:account-deposit' account.id %}">
+                {% csrf_token %}
+                <div class="modal-body form-grid">
+                    <div class="field">
+                        <label for="deposit-amount">Amount</label>
+                        <input id="deposit-amount" type="number" step="0.01" min="0.01" name="amount" value="{{ deposit_form.amount.value|default:'' }}" placeholder="0.00">
+                        {% if deposit_form.amount.errors %}
+                            <ul class="field-errors">
+                                {% for error in deposit_form.amount.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="deposit-reference">Reference</label>
+                        <input id="deposit-reference" type="text" name="reference" value="{{ deposit_form.reference.value|default:'' }}" placeholder="Receipt or teller reference">
+                        {% if deposit_form.reference.errors %}
+                            <ul class="field-errors">
+                                {% for error in deposit_form.reference.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="deposit-notes">Notes</label>
+                        <textarea id="deposit-notes" name="notes" rows="3" placeholder="Optional notes">{{ deposit_form.notes.value|default:'' }}</textarea>
+                        {% if deposit_form.notes.errors %}
+                            <ul class="field-errors">
+                                {% for error in deposit_form.notes.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="button button-ghost" type="button" data-dialog-close>Cancel</button>
+                    <button class="button button-primary" type="submit">Record deposit</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="withdraw-modal" {% if active_modal == "withdraw" %}open{% endif %}>
+            <div class="modal-header cluster" style="justify-content: space-between; align-items: start;">
+                <div>
+                    <p class="eyebrow">Withdrawal</p>
+                    <h2>Post a withdrawal</h2>
+                </div>
+                <button class="modal-close" type="button" data-dialog-close>Close</button>
+            </div>
+            <form method="post" action="{% url 'savings_web:account-withdraw' account.id %}">
+                {% csrf_token %}
+                <div class="modal-body form-grid">
+                    <div class="field">
+                        <label for="withdraw-amount">Amount</label>
+                        <input id="withdraw-amount" type="number" step="0.01" min="0.01" name="amount" value="{{ withdraw_form.amount.value|default:'' }}" placeholder="0.00">
+                        {% if withdraw_form.amount.errors %}
+                            <ul class="field-errors">
+                                {% for error in withdraw_form.amount.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="withdraw-reference">Reference</label>
+                        <input id="withdraw-reference" type="text" name="reference" value="{{ withdraw_form.reference.value|default:'' }}" placeholder="Cash slip or teller reference">
+                        {% if withdraw_form.reference.errors %}
+                            <ul class="field-errors">
+                                {% for error in withdraw_form.reference.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="withdraw-notes">Notes</label>
+                        <textarea id="withdraw-notes" name="notes" rows="3" placeholder="Optional notes">{{ withdraw_form.notes.value|default:'' }}</textarea>
+                        {% if withdraw_form.notes.errors %}
+                            <ul class="field-errors">
+                                {% for error in withdraw_form.notes.errors %}
+                                    <li>{{ error }}</li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="button button-ghost" type="button" data-dialog-close>Cancel</button>
+                    <button class="button button-warm" type="submit">Record withdrawal</button>
+                </div>
+            </form>
+        </dialog>
+    {% endif %}
+{% endblock %}

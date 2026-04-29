@@ -5,14 +5,15 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.exceptions import Throttled, ValidationError
+from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
-from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .access import is_user_manager, scope_user_queryset
 from .models import EmailOTP
 from .serializers import (
     ChangePasswordSerializer,
@@ -50,20 +51,7 @@ class AuthUserThrottle(UserRateThrottle):
 
 class IsUserManager(permissions.BasePermission):
     def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and (
-                user.is_superuser
-                or getattr(user, "role", None)
-                in {
-                    User.Role.SUPER_ADMIN,
-                    User.Role.INSTITUTION_ADMIN,
-                    User.Role.BRANCH_MANAGER,
-                }
-            )
-        )
+        return is_user_manager(request.user)
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -71,24 +59,45 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsUserManager]
     authentication_classes = [JWTAuthentication]
     filterset_fields = ["role", "institution", "branch", "is_active", "is_email_verified"]
-    search_fields = ["email", "username", "first_name", "last_name", "phone"]
+    search_fields = [
+        "email",
+        "username",
+        "first_name",
+        "last_name",
+        "phone",
+        "institution__name",
+        "branch__name",
+    ]
     ordering_fields = ["created_at", "email", "username", "role"]
     ordering = ["-created_at"]
 
     def get_queryset(self):
         queryset = User.objects.select_related("institution", "branch").order_by("-created_at")
-        user = self.request.user
+        return scope_user_queryset(queryset, self.request.user)
 
-        if user.is_superuser or getattr(user, "role", None) == User.Role.SUPER_ADMIN:
-            return queryset
+    def perform_update(self, serializer):
+        target_user = serializer.instance
 
-        if getattr(user, "role", None) == User.Role.INSTITUTION_ADMIN:
-            return queryset.filter(institution=user.institution)
+        if target_user == self.request.user:
+            protected_fields = {"role", "institution", "branch", "is_active"}
+            changed_fields = protected_fields.intersection(serializer.validated_data.keys())
+            if changed_fields:
+                raise ValidationError(
+                    {
+                        "detail": (
+                            "Use the profile endpoint for your own profile. "
+                            "Role, assignment, and activation cannot be changed here."
+                        )
+                    }
+                )
 
-        if getattr(user, "role", None) == User.Role.BRANCH_MANAGER:
-            return queryset.filter(institution=user.institution, branch=user.branch)
+        serializer.save()
 
-        return queryset.none()
+    def perform_destroy(self, instance):
+        if instance == self.request.user:
+            raise ValidationError({"detail": "You cannot delete your own account."})
+
+        instance.delete()
 
 
 class RegisterView(APIView):

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
@@ -6,9 +7,6 @@ from .models import CustomUser, EmailOTP
 
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
-    # =========================
-    # Fieldsets
-    # =========================
     fieldsets = tuple(UserAdmin.fieldsets) + (
         (
             "FinCore Access",
@@ -50,9 +48,6 @@ class CustomUserAdmin(UserAdmin):
         ),
     )
 
-    # =========================
-    # List View
-    # =========================
     list_display = (
         "id",
         "email",
@@ -88,18 +83,8 @@ class CustomUserAdmin(UserAdmin):
 
     ordering = ("-created_at",)
     date_hierarchy = "created_at"
-
-    # =========================
-    # Performance
-    # =========================
     list_select_related = ("institution", "branch")
 
-    # ✅ ONLY enable if InstitutionAdmin & BranchAdmin have search_fields
-    # autocomplete_fields = ("institution", "branch")
-
-    # =========================
-    # Readonly
-    # =========================
     readonly_fields = (
         "created_at",
         "updated_at",
@@ -107,12 +92,32 @@ class CustomUserAdmin(UserAdmin):
         "date_joined",
     )
 
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = list(super().get_fieldsets(request, obj))
+
+        cloudinary_enabled = getattr(settings, "ENABLE_CLOUDINARY", False)
+
+        if not cloudinary_enabled:
+            cleaned_fieldsets = []
+
+            for title, options in fieldsets:
+                options = options.copy()
+                fields = options.get("fields")
+
+                if fields:
+                    options["fields"] = tuple(
+                        field for field in fields if field != "avatar"
+                    )
+
+                cleaned_fieldsets.append((title, options))
+
+            return cleaned_fieldsets
+
+        return fieldsets
+
 
 @admin.register(EmailOTP)
 class EmailOTPAdmin(admin.ModelAdmin):
-    # =========================
-    # List View
-    # =========================
     list_display = (
         "id",
         "email",
@@ -139,15 +144,8 @@ class EmailOTPAdmin(admin.ModelAdmin):
 
     ordering = ("-created_at",)
     date_hierarchy = "created_at"
-
-    # =========================
-    # Performance
-    # =========================
     list_select_related = ("user",)
 
-    # =========================
-    # Readonly
-    # =========================
     readonly_fields = (
         "user",
         "email",

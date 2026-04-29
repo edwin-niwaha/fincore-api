@@ -2,7 +2,14 @@ services:
   api:
     build: .
     command: python manage.py runserver 0.0.0.0:8000
-    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings.development
+      DEBUG: "True"
+      DATABASE_URL: postgresql://fincore:fincore_dev_password@db:5432/fincore
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      CSRF_TRUSTED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      ENABLE_CLOUDINARY: "False"
     ports:
       - "8000:8000"
     depends_on:

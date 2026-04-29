@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ page_title|default:"Loans" }} | FinCore</title>
+    <style>
+        :root {
+            --bg: #eef1f4;
+            --ink: #182232;
+            --muted: #5d6879;
+            --panel: rgba(255, 255, 255, 0.86);
+            --line: rgba(24, 34, 50, 0.10);
+            --navy: #123b66;
+            --cobalt: #2c6fb7;
+            --teal: #138a8f;
+            --amber: #d58b2e;
+            --rose: #b8515a;
+            --shadow: 0 22px 60px rgba(21, 28, 39, 0.12);
+            --radius-lg: 26px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            font-family: "Segoe UI Variable", "Trebuchet MS", sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(44, 111, 183, 0.18), transparent 28rem),
+                radial-gradient(circle at top right, rgba(19, 138, 143, 0.14), transparent 24rem),
+                linear-gradient(180deg, #f8fafc 0%, #eef1f4 44%, #e5ebf1 100%);
+        }
+
+        a { color: inherit; text-decoration: none; }
+
+        .shell {
+            width: min(1180px, calc(100% - 2rem));
+            margin: 0 auto;
+            padding: 2rem 0 3rem;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--navy);
+        }
+
+        .brand-mark {
+            width: 2.4rem;
+            height: 2.4rem;
+            border-radius: 0.85rem;
+            background: linear-gradient(135deg, var(--cobalt), var(--teal));
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+        }
+
+        .hero,
+        .panel {
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(16px);
+        }
+
+        .hero {
+            background: linear-gradient(140deg, rgba(255, 255, 255, 0.94), rgba(235, 242, 250, 0.88));
+            border-radius: var(--radius-lg);
+            padding: 1.6rem;
+            margin-bottom: 1.35rem;
+        }
+
+        .hero h1,
+        .panel h2,
+        .panel h3 {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+        }
+
+        .eyebrow {
+            margin: 0 0 0.5rem;
+            color: var(--cobalt);
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-size: 0.82rem;
+        }
+
+        .hero-copy {
+            display: flex;
+            justify-content: space-between;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+
+        .hero-copy p,
+        .muted {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .panel {
+            background: var(--panel);
+            border-radius: var(--radius-md);
+            padding: 1.15rem;
+        }
+
+        .stat-grid,
+        .card-grid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .stat-grid {
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            margin-top: 1.25rem;
+        }
+
+        .card-grid {
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        }
+
+        .kpi { display: grid; gap: 0.4rem; }
+        .kpi .label {
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .kpi .value {
+            font-size: clamp(1.55rem, 3.8vw, 2.35rem);
+            font-weight: 700;
+        }
+
+        .cluster {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .stack { display: grid; gap: 1rem; }
+
+        .button,
+        button,
+        input,
+        textarea,
+        select {
+            font: inherit;
+        }
+
+        .button,
+        button[type="submit"] {
+            cursor: pointer;
+            border: 0;
+            border-radius: 999px;
+            padding: 0.88rem 1.08rem;
+            font-weight: 700;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, var(--cobalt), var(--navy));
+            color: #fff;
+            box-shadow: 0 12px 26px rgba(18, 59, 102, 0.20);
+        }
+
+        .button-teal {
+            background: linear-gradient(135deg, var(--teal), #0d6e72);
+            color: #fff;
+            box-shadow: 0 12px 26px rgba(19, 138, 143, 0.20);
+        }
+
+        .button-amber {
+            background: linear-gradient(135deg, #efb658, var(--amber));
+            color: #36210d;
+            box-shadow: 0 12px 26px rgba(213, 139, 46, 0.20);
+        }
+
+        .button-rose {
+            background: linear-gradient(135deg, #d36d73, var(--rose));
+            color: #fff;
+            box-shadow: 0 12px 26px rgba(184, 81, 90, 0.18);
+        }
+
+        .button-ghost {
+            background: rgba(255, 255, 255, 0.7);
+            color: var(--ink);
+            border: 1px solid var(--line);
+        }
+
+        .button:hover,
+        button[type="submit"]:hover { transform: translateY(-1px); }
+
+        .pill,
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            font-weight: 700;
+            text-transform: capitalize;
+        }
+
+        .pill {
+            padding: 0.38rem 0.72rem;
+            border: 1px solid rgba(44, 111, 183, 0.16);
+            background: rgba(44, 111, 183, 0.09);
+            color: var(--navy);
+            font-size: 0.82rem;
+        }
+
+        .pill.pending { background: rgba(213, 139, 46, 0.12); color: #8c5616; border-color: rgba(213, 139, 46, 0.18); }
+        .pill.approved { background: rgba(44, 111, 183, 0.10); color: var(--navy); }
+        .pill.disbursed { background: rgba(19, 138, 143, 0.10); color: #0d6164; border-color: rgba(19, 138, 143, 0.18); }
+        .pill.closed { background: rgba(24, 34, 50, 0.08); color: var(--ink); }
+        .pill.rejected { background: rgba(184, 81, 90, 0.10); color: var(--rose); border-color: rgba(184, 81, 90, 0.16); }
+
+        .badge.schedule-paid,
+        .badge.deposit {
+            background: rgba(19, 138, 143, 0.12);
+            color: #0d6164;
+            padding: 0.32rem 0.66rem;
+            font-size: 0.8rem;
+        }
+
+        .badge.schedule-open,
+        .badge.withdrawal {
+            background: rgba(213, 139, 46, 0.12);
+            color: #8c5616;
+            padding: 0.32rem 0.66rem;
+            font-size: 0.8rem;
+        }
+
+        .messages {
+            display: grid;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .message {
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            background: rgba(255, 255, 255, 0.78);
+            padding: 0.95rem 1rem;
+        }
+
+        .message.success {
+            border-color: rgba(19, 138, 143, 0.22);
+            background: rgba(19, 138, 143, 0.10);
+        }
+
+        .message.error {
+            border-color: rgba(184, 81, 90, 0.22);
+            background: rgba(184, 81, 90, 0.09);
+        }
+
+        .form-grid,
+        .search-row {
+            display: grid;
+            gap: 0.9rem;
+        }
+
+        .search-row {
+            grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto;
+            align-items: end;
+        }
+
+        .field { display: grid; gap: 0.45rem; }
+
+        input,
+        textarea,
+        select {
+            width: 100%;
+            border: 1px solid rgba(24, 34, 50, 0.14);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--ink);
+            padding: 0.82rem 0.92rem;
+        }
+
+        textarea { resize: vertical; }
+
+        .field-errors {
+            color: var(--rose);
+            margin: 0;
+            padding-left: 1rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 0.88rem 0.45rem;
+            border-bottom: 1px solid rgba(24, 34, 50, 0.08);
+            vertical-align: top;
+        }
+
+        th {
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 0.74rem;
+        }
+
+        .table-wrap { overflow-x: auto; }
+
+        .meta-list { display: grid; gap: 0.72rem; }
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            border-bottom: 1px solid rgba(24, 34, 50, 0.08);
+            padding-bottom: 0.62rem;
+        }
+        .meta-row:last-child { border-bottom: 0; padding-bottom: 0; }
+
+        .empty {
+            text-align: center;
+            color: var(--muted);
+            padding: 2rem 1rem;
+        }
+
+        @media (max-width: 760px) {
+            .shell { width: min(100% - 1rem, 100%); padding-top: 1rem; }
+            .hero, .panel { padding: 1rem; }
+            .search-row { grid-template-columns: 1fr; }
+            .meta-row { flex-direction: column; gap: 0.35rem; }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <div class="topbar">
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true"></span>
+                <span>FinCore Loan Desk</span>
+            </div>
+            <div class="cluster">
+                <a class="button button-ghost" href="{% url 'loans_web:product-list' %}">Products</a>
+                <a class="button button-ghost" href="{% url 'loans_web:application-list' %}">Applications</a>
+            </div>
+        </div>
+
+        {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                    <div class="message {{ message.tags|default:'info' }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

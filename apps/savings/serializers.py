@@ -1,20 +1,173 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
+from apps.common.models import StatusChoices
+
 from .models import SavingsAccount, SavingsTransaction
 
-class SavingsAccountSerializer(serializers.ModelSerializer):
-    client_name = serializers.CharField(source="client.__str__", read_only=True)
-    class Meta:
-        model = SavingsAccount
-        fields = "__all__"
-        read_only_fields = ["id", "account_number", "balance", "created_at", "updated_at"]
+ZERO_DECIMAL = Decimal("0.00")
+
 
 class SavingsTransactionSerializer(serializers.ModelSerializer):
+    account_number = serializers.CharField(source="account.account_number", read_only=True)
+    client_id = serializers.UUIDField(source="account.client_id", read_only=True)
+    client_name = serializers.SerializerMethodField()
+    branch_name = serializers.CharField(source="account.client.branch.name", read_only=True)
+    institution_name = serializers.CharField(
+        source="account.client.institution.name",
+        read_only=True,
+    )
+    performed_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
+
     class Meta:
         model = SavingsTransaction
-        fields = "__all__"
-        read_only_fields = ["id", "balance_after", "performed_by", "created_at", "updated_at"]
+        fields = (
+            "id",
+            "account",
+            "account_number",
+            "client_id",
+            "client_name",
+            "branch_name",
+            "institution_name",
+            "type",
+            "amount",
+            "balance_after",
+            "reference",
+            "performed_by",
+            "performed_by_email",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_client_name(self, obj):
+        client = obj.account.client
+        return f"{client.first_name} {client.last_name}".strip()
+
+
+class SavingsAccountSerializer(serializers.ModelSerializer):
+    client_name = serializers.SerializerMethodField()
+    client_member_number = serializers.CharField(source="client.member_number", read_only=True)
+    branch_id = serializers.UUIDField(source="client.branch_id", read_only=True)
+    branch_name = serializers.CharField(source="client.branch.name", read_only=True)
+    institution_id = serializers.UUIDField(source="client.institution_id", read_only=True)
+    institution_name = serializers.CharField(source="client.institution.name", read_only=True)
+    transaction_count = serializers.SerializerMethodField()
+    last_transaction_at = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SavingsAccount
+        fields = (
+            "id",
+            "client",
+            "client_name",
+            "client_member_number",
+            "branch_id",
+            "branch_name",
+            "institution_id",
+            "institution_name",
+            "account_number",
+            "balance",
+            "status",
+            "transaction_count",
+            "last_transaction_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = (
+            "id",
+            "client_name",
+            "client_member_number",
+            "branch_id",
+            "branch_name",
+            "institution_id",
+            "institution_name",
+            "account_number",
+            "balance",
+            "transaction_count",
+            "last_transaction_at",
+            "created_at",
+            "updated_at",
+        )
+
+    def get_client_name(self, obj):
+        return f"{obj.client.first_name} {obj.client.last_name}".strip()
+
+    def get_transaction_count(self, obj):
+        if hasattr(obj, "transaction_count"):
+            return obj.transaction_count
+        return obj.transactions.count()
+
+    def get_last_transaction_at(self, obj):
+        last_transaction_at = getattr(obj, "last_transaction_at", None)
+        if last_transaction_at is not None:
+            return last_transaction_at
+
+        transaction = obj.transactions.order_by("-created_at").only("created_at").first()
+        return getattr(transaction, "created_at", None)
+
+    def validate(self, attrs):
+        client = attrs.get("client") or getattr(self.instance, "client", None)
+        status = attrs.get("status", getattr(self.instance, "status", StatusChoices.ACTIVE))
+
+        if not client:
+            raise serializers.ValidationError({"client": ["Client is required."]})
+
+        if (
+            self.instance
+            and "client" in attrs
+            and self.instance.client_id != client.id
+            and self.instance.transactions.exists()
+        ):
+            raise serializers.ValidationError(
+                {"client": ["Accounts with transaction history cannot be reassigned."]}
+            )
+
+        if (
+            self.instance
+            and status == StatusChoices.CLOSED
+            and self.instance.balance > ZERO_DECIMAL
+        ):
+            raise serializers.ValidationError(
+                {"status": ["Accounts with a positive balance cannot be closed."]}
+            )
+
+        return attrs
+
+
+class SavingsAccountDetailSerializer(SavingsAccountSerializer):
+    recent_transactions = serializers.SerializerMethodField()
+
+    class Meta(SavingsAccountSerializer.Meta):
+        fields = SavingsAccountSerializer.Meta.fields + ("recent_transactions",)
+        read_only_fields = fields
+
+    def get_recent_transactions(self, obj):
+        queryset = obj.transactions.select_related(
+            "performed_by",
+            "account__client__branch",
+            "account__client__institution",
+        ).order_by("-created_at")[:10]
+        return SavingsTransactionSerializer(queryset, many=True).data
+
 
 class SavingsOperationSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     reference = serializers.CharField(max_length=80)
     notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_amount(self, value):
+        if value <= ZERO_DECIMAL:
+            raise serializers.ValidationError("Amount must be greater than zero.")
+        return value
+
+    def validate_reference(self, value):
+        reference = value.strip()
+        if not reference:
+            raise serializers.ValidationError("Reference is required.")
+        return reference
+
+    def validate_notes(self, value):
+        return value.strip()

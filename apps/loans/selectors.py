@@ -1,12 +1,69 @@
-def loans_for_user(user):
-    from .models import LoanApplication
-    qs = LoanApplication.objects.select_related('client', 'product', 'client__institution', 'client__branch')
-    if user.role == 'client':
-        return qs.filter(client__user=user)
-    if user.role == 'super_admin':
-        return qs
-    if user.branch_id:
-        return qs.filter(client__branch=user.branch)
+from decimal import Decimal
+
+from django.db.models import Count, DecimalField, Sum, Value
+from django.db.models.functions import Coalesce
+
+from apps.users.models import CustomUser
+
+from .models import LoanApplication, LoanProduct
+
+
+def loan_products_for_user(user):
+    queryset = (
+        LoanProduct.objects.select_related("institution")
+        .annotate(
+            application_count=Count("loanapplication", distinct=True),
+            total_requested_amount=Coalesce(
+                Sum("loanapplication__amount"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+        )
+        .order_by("institution__name", "code", "name")
+    )
+
+    if not user or not user.is_authenticated:
+        return queryset.none()
+
+    if user.role == CustomUser.Role.SUPER_ADMIN:
+        return queryset
+
     if user.institution_id:
-        return qs.filter(client__institution=user.institution)
-    return qs.none()
+        return queryset.filter(institution=user.institution)
+
+    return queryset.none()
+
+
+def loans_for_user(user):
+    queryset = (
+        LoanApplication.objects.select_related(
+            "client",
+            "product",
+            "product__institution",
+            "client__institution",
+            "client__branch",
+            "approved_by",
+        )
+        .annotate(
+            repayment_count=Count("repayments", distinct=True),
+            schedule_count=Count("schedule", distinct=True),
+        )
+        .order_by("-created_at")
+    )
+
+    if not user or not user.is_authenticated:
+        return queryset.none()
+
+    if user.role == CustomUser.Role.CLIENT:
+        return queryset.filter(client__user=user)
+
+    if user.role == CustomUser.Role.SUPER_ADMIN:
+        return queryset
+
+    if user.branch_id:
+        return queryset.filter(client__branch=user.branch)
+
+    if user.institution_id:
+        return queryset.filter(client__institution=user.institution)
+
+    return queryset.none()

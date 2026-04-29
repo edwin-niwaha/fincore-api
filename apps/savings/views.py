@@ -1,28 +1,98 @@
-from rest_framework import decorators, response, viewsets
-from rest_framework.exceptions import PermissionDenied
+from rest_framework import decorators, response, status, viewsets
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from apps.audit.services import AuditService
 from apps.clients.selectors import clients_for_user
 from apps.common.permissions import IsCashRole
+
 from .models import SavingsTransaction
 from .selectors import savings_accounts_for_user
-from .serializers import SavingsAccountSerializer, SavingsOperationSerializer, SavingsTransactionSerializer
+from .serializers import (
+    SavingsAccountDetailSerializer,
+    SavingsAccountSerializer,
+    SavingsOperationSerializer,
+    SavingsTransactionSerializer,
+)
 from .services import SavingsService
 
+
 class SavingsAccountViewSet(viewsets.ModelViewSet):
-    serializer_class = SavingsAccountSerializer
-    filterset_fields = ["client", "status"]
-    search_fields = ["account_number", "client__member_number", "client__first_name", "client__last_name"]
+    filterset_fields = {
+        "client": ["exact"],
+        "status": ["exact"],
+        "client__branch": ["exact"],
+        "client__institution": ["exact"],
+    }
+    search_fields = [
+        "account_number",
+        "client__member_number",
+        "client__first_name",
+        "client__last_name",
+    ]
+    ordering_fields = ["created_at", "updated_at", "account_number", "balance", "status"]
+    ordering = ["account_number"]
 
     def get_queryset(self):
         return savings_accounts_for_user(self.request.user)
 
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return SavingsAccountDetailSerializer
+        return SavingsAccountSerializer
+
+    def _validate_scope(self, serializer):
+        client = serializer.validated_data.get(
+            "client",
+            getattr(serializer.instance, "client", None),
+        )
+        if client and not clients_for_user(self.request.user).filter(pk=client.pk).exists():
+            raise PermissionDenied("You cannot manage a savings account outside your scope.")
+
     def perform_create(self, serializer):
-        client = serializer.validated_data.get("client")
-        if not clients_for_user(self.request.user).filter(pk=getattr(client, "pk", None)).exists():
-            raise PermissionDenied("You cannot create a savings account for this client.")
-        serializer.save()
+        self._validate_scope(serializer)
+        account = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            action="savings.account.create",
+            target=str(account.id),
+            metadata={
+                "account_number": account.account_number,
+                "client_id": str(account.client_id),
+            },
+        )
+
+    def perform_update(self, serializer):
+        self._validate_scope(serializer)
+        account = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            action="savings.account.update",
+            target=str(account.id),
+            metadata={
+                "account_number": account.account_number,
+                "client_id": str(account.client_id),
+                "status": account.status,
+            },
+        )
+
+    def perform_destroy(self, instance):
+        if instance.transactions.exists():
+            raise ValidationError("Savings accounts with transaction history cannot be deleted.")
+        if instance.balance > 0:
+            raise ValidationError("Savings accounts with a positive balance cannot be deleted.")
+
+        account_id = str(instance.id)
+        account_number = instance.account_number
+        instance.delete()
+        AuditService.log(
+            user=self.request.user,
+            action="savings.account.delete",
+            target=account_id,
+            metadata={"account_number": account_number},
+        )
 
     def get_permissions(self):
-        if self.action in ["create", "deposit", "withdraw"]:
+        if self.action in {"create", "update", "partial_update", "destroy", "deposit", "withdraw"}:
             return [IsCashRole()]
         return super().get_permissions()
 
@@ -30,21 +100,69 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
     def deposit(self, request, pk=None):
         serializer = SavingsOperationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        tx = SavingsService.deposit(account=self.get_object(), performed_by=request.user, **serializer.validated_data)
-        return response.Response(SavingsTransactionSerializer(tx).data, status=201)
+        transaction_row = SavingsService.deposit(
+            account=self.get_object(),
+            performed_by=request.user,
+            **serializer.validated_data,
+        )
+        return response.Response(
+            SavingsTransactionSerializer(transaction_row).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @decorators.action(detail=True, methods=["post"])
     def withdraw(self, request, pk=None):
         serializer = SavingsOperationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        tx = SavingsService.withdraw(account=self.get_object(), performed_by=request.user, **serializer.validated_data)
-        return response.Response(SavingsTransactionSerializer(tx).data, status=201)
+        transaction_row = SavingsService.withdraw(
+            account=self.get_object(),
+            performed_by=request.user,
+            **serializer.validated_data,
+        )
+        return response.Response(
+            SavingsTransactionSerializer(transaction_row).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @decorators.action(detail=True, methods=["get"])
+    def transactions(self, request, pk=None):
+        queryset = (
+            self.get_object()
+            .transactions.select_related(
+                "performed_by",
+                "account__client__branch",
+                "account__client__institution",
+            )
+            .order_by("-created_at")
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = SavingsTransactionSerializer(page or queryset, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return response.Response(serializer.data)
+
 
 class SavingsTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = SavingsTransactionSerializer
-    filterset_fields = ["account", "type"]
-    search_fields = ["reference"]
+    filterset_fields = {
+        "account": ["exact"],
+        "type": ["exact"],
+        "account__client": ["exact"],
+        "account__client__branch": ["exact"],
+        "account__client__institution": ["exact"],
+    }
+    search_fields = ["reference", "account__account_number", "account__client__member_number"]
+    ordering_fields = ["created_at", "amount", "reference"]
+    ordering = ["-created_at"]
 
     def get_queryset(self):
         account_ids = savings_accounts_for_user(self.request.user).values_list("id", flat=True)
-        return SavingsTransaction.objects.filter(account_id__in=account_ids).select_related("account", "performed_by")
+        return (
+            SavingsTransaction.objects.filter(account_id__in=account_ids)
+            .select_related(
+                "performed_by",
+                "account__client__branch",
+                "account__client__institution",
+            )
+            .order_by("-created_at")
+        )

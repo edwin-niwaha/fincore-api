@@ -1,0 +1,117 @@
+{% extends "savings/base.html" %}
+
+{% block content %}
+    <section class="hero">
+        <p class="eyebrow">Savings Overview</p>
+        <div class="hero-copy">
+            <div>
+                <h1>Savings accounts in one place</h1>
+                <p>
+                    Review account balances, branch distribution, and member portfolios before
+                    opening the individual account workspace.
+                </p>
+            </div>
+            <div class="cluster">
+                <span class="pill">{{ summary.account_count }} account{{ summary.account_count|pluralize }}</span>
+                <span class="pill">{{ summary.active_count }} active</span>
+            </div>
+        </div>
+        <div class="stat-grid">
+            <div class="panel kpi">
+                <span class="label">Total Portfolio</span>
+                <span class="value">{{ summary.total_balance|floatformat:2 }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Account Count</span>
+                <span class="value">{{ summary.account_count }}</span>
+            </div>
+            <div class="panel kpi">
+                <span class="label">Active Accounts</span>
+                <span class="value">{{ summary.active_count }}</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel stack">
+        <div>
+            <h2>Find an account</h2>
+            <p class="muted">Search by account number, member number, member name, or branch.</p>
+        </div>
+        <form method="get" class="search-row">
+            <div class="field">
+                <label for="search">Search</label>
+                <input id="search" type="search" name="q" value="{{ search_query }}" placeholder="Try SAV-MAIN-000001-001 or Jane Doe">
+            </div>
+            <button class="button button-primary" type="submit">Search</button>
+        </form>
+    </section>
+
+    <section class="card-grid" style="margin-top: 1.2rem;">
+        {% for account in accounts %}
+            <article class="panel stack">
+                <div class="cluster" style="justify-content: space-between; align-items: center;">
+                    <span class="pill {{ account.status }}">{{ account.status }}</span>
+                    <span class="muted">{{ account.transaction_count }} transaction{{ account.transaction_count|pluralize }}</span>
+                </div>
+                <div>
+                    <h2>{{ account.account_number }}</h2>
+                    <p class="muted" style="margin: 0.45rem 0 0;">
+                        {{ account.client_name }} · {{ account.client_member_number }}
+                    </p>
+                </div>
+                <div class="meta-list">
+                    <div class="meta-row">
+                        <span class="muted">Balance</span>
+                        <strong>{{ account.balance|floatformat:2 }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Branch</span>
+                        <strong>{{ account.branch_name }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Institution</span>
+                        <strong>{{ account.institution_name }}</strong>
+                    </div>
+                    <div class="meta-row">
+                        <span class="muted">Last activity</span>
+                        <strong>
+                            {% if account.last_transaction_at %}
+                                {{ account.last_transaction_at|date:"M j, Y H:i" }}
+                            {% else %}
+                                No transactions yet
+                            {% endif %}
+                        </strong>
+                    </div>
+                </div>
+                <a class="button button-ghost" href="{% url 'savings_web:account-detail' account.id %}">
+                    Open account
+                </a>
+            </article>
+        {% empty %}
+            <section class="panel empty">
+                <h2>No savings accounts found</h2>
+                <p>
+                    {% if search_query %}
+                        No accounts matched “{{ search_query }}”.
+                    {% else %}
+                        Savings accounts will appear here once members are onboarded.
+                    {% endif %}
+                </p>
+            </section>
+        {% endfor %}
+    </section>
+
+    {% if is_paginated %}
+        <div class="pager">
+            <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+            <div class="cluster">
+                {% if page_obj.has_previous %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                    <a class="button button-ghost" href="?{% if search_query %}q={{ search_query|urlencode }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

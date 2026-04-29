@@ -1,5 +1,7 @@
 from django.contrib import admin
+
 from .models import LoanApplication, LoanProduct, LoanRepayment, RepaymentSchedule
+
 admin.site.register(LoanProduct)
 admin.site.register(LoanApplication)
 admin.site.register(RepaymentSchedule)
