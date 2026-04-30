@@ -22,6 +22,12 @@ class UserReadSerializerMixin(serializers.ModelSerializer):
     institution_code = serializers.CharField(source="institution.code", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     branch_code = serializers.CharField(source="branch.code", read_only=True)
+    profile_type = serializers.SerializerMethodField()
+    linked_client_id = serializers.UUIDField(source="client_profile.id", read_only=True)
+    linked_client_member_number = serializers.CharField(
+        source="client_profile.member_number",
+        read_only=True,
+    )
 
     def get_avatar_url(self, obj):
         if not getattr(obj, "avatar", None):
@@ -36,6 +42,13 @@ class UserReadSerializerMixin(serializers.ModelSerializer):
         if full_name:
             return full_name
         return obj.username or obj.email
+
+    def get_profile_type(self, obj):
+        if getattr(obj, "client_profile", None):
+            return "client"
+        if getattr(obj, "is_staff_user", False):
+            return "staff"
+        return "user"
 
 
 class UserSerializer(UserReadSerializerMixin):
@@ -58,6 +71,9 @@ class UserSerializer(UserReadSerializerMixin):
             "branch",
             "branch_name",
             "branch_code",
+            "profile_type",
+            "linked_client_id",
+            "linked_client_member_number",
             "is_active",
             "is_email_verified",
             "created_at",
@@ -88,6 +104,9 @@ class UserAdminSerializer(UserReadSerializerMixin):
             "branch",
             "branch_name",
             "branch_code",
+            "profile_type",
+            "linked_client_id",
+            "linked_client_member_number",
             "is_active",
             "is_email_verified",
             "password",
@@ -250,6 +269,9 @@ class ProfileSerializer(UserReadSerializerMixin):
             "branch",
             "branch_name",
             "branch_code",
+            "profile_type",
+            "linked_client_id",
+            "linked_client_member_number",
             "is_email_verified",
         )
         read_only_fields = (
@@ -263,6 +285,9 @@ class ProfileSerializer(UserReadSerializerMixin):
             "branch",
             "branch_name",
             "branch_code",
+            "profile_type",
+            "linked_client_id",
+            "linked_client_member_number",
             "is_email_verified",
             "avatar_url",
             "full_name",

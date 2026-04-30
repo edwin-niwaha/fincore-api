@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounting.models import JournalEntry, LedgerAccount
@@ -180,6 +181,13 @@ def test_operational_flows_generate_expected_double_entry_journals():
         institution=institution,
         branch=branch,
     )
+    manager = create_user(
+        email="manager@example.com",
+        username="manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
     client = create_client(institution=institution, branch=branch)
     savings_account = SavingsAccount.objects.create(client=client)
     product = LoanProduct.objects.create(
@@ -211,7 +219,9 @@ def test_operational_flows_generate_expected_double_entry_journals():
         performed_by=teller,
         reference="WIT-100",
     )
-    LoanService.approve(loan=loan, user=officer)
+    LoanService.initialize_new_application(loan=loan, created_by=officer, submit=True)
+    LoanService.recommend(loan=loan, user=officer)
+    LoanService.approve(loan=loan, user=manager)
     LoanService.disburse(loan=loan, user=officer, reference="DISB-100")
     repayment = LoanService.repay(
         loan=loan,
@@ -294,7 +304,12 @@ def test_trial_balance_endpoint_returns_balanced_totals_and_rows():
     api = APIClient()
     api.force_authenticate(user=accountant)
     response = api.get(
-        f"/api/v1/reports/trial-balance/?institution={institution.id}&branch={branch.id}&as_of=2026-04-29"
+        (
+            "/api/v1/reports/trial-balance/"
+            f"?institution={institution.id}"
+            f"&branch={branch.id}"
+            f"&as_of={timezone.localdate().isoformat()}"
+        )
     )
 
     assert response.status_code == 200

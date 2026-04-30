@@ -8,6 +8,7 @@ from apps.audit.models import AuditLog
 from apps.clients.models import Client
 from apps.institutions.models import Branch, Institution
 from apps.savings.models import SavingsAccount, SavingsTransaction
+from apps.savings.services import SavingsService
 from apps.transactions.models import Transaction
 
 
@@ -163,6 +164,56 @@ def test_deposits_and_withdrawals_create_transactions_and_audit_logs():
     )
     assert "savings.deposit" in audit_actions
     assert "savings.withdraw" in audit_actions
+
+
+@pytest.mark.django_db
+def test_account_transaction_history_supports_type_and_reference_filters():
+    institution = Institution.objects.create(name="Filter SACCO", code="filter")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    teller = create_user(
+        email="teller@filter.test",
+        username="teller-filter",
+        role="teller",
+        institution=institution,
+        branch=branch,
+    )
+    client = create_client(institution=institution, branch=branch)
+    account = SavingsAccount.objects.create(client=client)
+
+    SavingsService.deposit(
+        account=account,
+        amount=Decimal("200.00"),
+        performed_by=teller,
+        reference="FILTER-DEP-1",
+        notes="First deposit",
+    )
+    SavingsService.withdraw(
+        account=account,
+        amount=Decimal("50.00"),
+        performed_by=teller,
+        reference="FILTER-WIT-1",
+        notes="First withdrawal",
+    )
+
+    api = APIClient()
+    api.force_authenticate(user=teller)
+
+    deposit_history = api.get(
+        f"/api/v1/savings/accounts/{account.id}/transactions/",
+        {"type": "deposit"},
+    )
+    assert deposit_history.status_code == 200
+    assert deposit_history.data["count"] == 1
+    assert deposit_history.data["results"][0]["reference"] == "FILTER-DEP-1"
+    assert deposit_history.data["results"][0]["status"] == "posted"
+
+    search_history = api.get(
+        f"/api/v1/savings/accounts/{account.id}/transactions/",
+        {"search": "WIT-1"},
+    )
+    assert search_history.status_code == 200
+    assert search_history.data["count"] == 1
+    assert search_history.data["results"][0]["reference"] == "FILTER-WIT-1"
 
 
 @pytest.mark.django_db

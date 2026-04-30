@@ -4,11 +4,13 @@ from .models import Client
 
 
 def clients_for_user(user):
-    queryset = Client.objects.select_related("institution", "branch", "user").order_by(
-        "member_number",
-        "last_name",
-        "first_name",
-    )
+    queryset = Client.objects.select_related(
+        "institution",
+        "branch",
+        "user",
+        "created_by",
+        "updated_by",
+    ).order_by("member_number", "last_name", "first_name")
 
     if not user or not user.is_authenticated:
         return queryset.none()

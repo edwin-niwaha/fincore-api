@@ -55,6 +55,13 @@ def test_loan_web_pages_render_products_applications_and_disbursed_schedule():
         institution=institution,
         branch=branch,
     )
+    manager = create_user(
+        email="manager@web-loans.test",
+        username="web-loans-manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
     teller = create_user(
         email="teller@web-loans.test",
         username="web-loans-teller",
@@ -80,7 +87,9 @@ def test_loan_web_pages_render_products_applications_and_disbursed_schedule():
         term_months=6,
         purpose="Farm inputs",
     )
-    LoanService.approve(loan=loan, user=officer)
+    LoanService.initialize_new_application(loan=loan, created_by=officer, submit=True)
+    LoanService.recommend(loan=loan, user=officer)
+    LoanService.approve(loan=loan, user=manager)
     LoanService.disburse(loan=loan, user=teller, reference="WEB-DISB-1")
 
     browser = DjangoClient()
@@ -121,6 +130,13 @@ def test_loan_web_actions_approve_disburse_and_repay_and_block_unauthorized_user
         institution=institution,
         branch=branch,
     )
+    manager = create_user(
+        email="manager@desk-loans.test",
+        username="desk-loans-manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
     teller = create_user(
         email="teller@desk-loans.test",
         username="desk-loans-teller",
@@ -153,10 +169,12 @@ def test_loan_web_actions_approve_disburse_and_repay_and_block_unauthorized_user
         term_months=6,
         purpose="Tuition",
     )
+    LoanService.initialize_new_application(loan=loan, created_by=officer, submit=True)
+    LoanService.recommend(loan=loan, user=officer)
 
-    officer_browser = DjangoClient()
-    officer_browser.force_login(officer)
-    approve_response = officer_browser.post(
+    manager_browser = DjangoClient()
+    manager_browser.force_login(manager)
+    approve_response = manager_browser.post(
         reverse("loans_web:application-approve", kwargs={"pk": loan.pk}),
         follow=True,
     )

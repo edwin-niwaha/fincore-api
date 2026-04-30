@@ -95,6 +95,13 @@ def build_transaction_fixture():
         institution=institution_a,
         branch=branch_a1,
     )
+    manager_a1 = create_user(
+        email="manager-a1@tx.test",
+        username="tx-manager-a1",
+        role="branch_manager",
+        institution=institution_a,
+        branch=branch_a1,
+    )
     client_user = create_user(
         email="client@tx.test",
         username="tx-client",
@@ -159,7 +166,9 @@ def build_transaction_fixture():
         term_months=6,
         purpose="Inventory",
     )
-    LoanService.approve(loan=loan_a1, user=officer_a1)
+    LoanService.initialize_new_application(loan=loan_a1, created_by=officer_a1, submit=True)
+    LoanService.recommend(loan=loan_a1, user=officer_a1)
+    LoanService.approve(loan=loan_a1, user=manager_a1)
     LoanService.disburse(loan=loan_a1, user=teller_a1, reference="TX-LOAN-DISB-1")
     LoanService.repay(
         loan=loan_a1,

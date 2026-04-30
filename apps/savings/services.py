@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.accounting.services import AccountingPostingService
 from apps.audit.services import AuditService
+from apps.notifications.services import NotificationService
 from apps.common.models import StatusChoices
 from apps.transactions.models import Transaction
 from apps.transactions.services import TransactionLedgerService
@@ -107,6 +108,22 @@ class SavingsService:
                 "reference": reference,
             },
         )
+        NotificationService.notify_client(
+            client=account.client,
+            title="Savings deposit recorded",
+            message=(
+                f"A deposit of {amount:.2f} was posted to savings account "
+                f"{account.account_number}. New balance: {account.balance:.2f}."
+            ),
+            category="savings_deposit_recorded",
+            data={
+                "account_id": str(account.id),
+                "account_number": account.account_number,
+                "reference": reference,
+                "amount": f"{amount:.2f}",
+                "balance_after": f"{account.balance:.2f}",
+            },
+        )
         return savings_transaction
 
     @classmethod
@@ -167,6 +184,22 @@ class SavingsService:
                 "account_number": account.account_number,
                 "amount": str(amount),
                 "reference": reference,
+            },
+        )
+        NotificationService.notify_client(
+            client=account.client,
+            title="Savings withdrawal recorded",
+            message=(
+                f"A withdrawal of {amount:.2f} was posted to savings account "
+                f"{account.account_number}. New balance: {account.balance:.2f}."
+            ),
+            category="savings_withdrawal_recorded",
+            data={
+                "account_id": str(account.id),
+                "account_number": account.account_number,
+                "reference": reference,
+                "amount": f"{amount:.2f}",
+                "balance_after": f"{account.balance:.2f}",
             },
         )
         return savings_transaction

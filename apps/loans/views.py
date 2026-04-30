@@ -1,11 +1,10 @@
-from rest_framework import decorators, response, viewsets
+from rest_framework import decorators, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from apps.audit.services import AuditService
 from apps.clients.selectors import clients_for_user
-from apps.common.permissions import IsCashRole, IsLoanRole
-from apps.users.access import is_super_admin
+from apps.users.models import CustomUser
 
 from .models import LoanRepayment
 from .selectors import loan_products_for_user, loans_for_user
@@ -19,6 +18,33 @@ from .serializers import (
     RepaymentScheduleSerializer,
 )
 from .services import LoanService
+
+LOAN_PRODUCT_MANAGE_ROLES = {
+    CustomUser.Role.SUPER_ADMIN,
+    CustomUser.Role.INSTITUTION_ADMIN,
+    CustomUser.Role.BRANCH_MANAGER,
+    CustomUser.Role.ACCOUNTANT,
+}
+LOAN_CREATE_ROLES = {
+    CustomUser.Role.SUPER_ADMIN,
+    CustomUser.Role.INSTITUTION_ADMIN,
+    CustomUser.Role.BRANCH_MANAGER,
+    CustomUser.Role.LOAN_OFFICER,
+}
+LOAN_REVIEW_ROLES = LoanService.LOAN_OFFICER_ROLES
+LOAN_APPROVER_ROLES = LoanService.APPROVER_ROLES
+LOAN_REJECTION_ROLES = LoanService.LOAN_OFFICER_ROLES | LoanService.APPROVER_ROLES
+CASH_COLLECTION_ROLES = {
+    CustomUser.Role.SUPER_ADMIN,
+    CustomUser.Role.INSTITUTION_ADMIN,
+    CustomUser.Role.BRANCH_MANAGER,
+    CustomUser.Role.ACCOUNTANT,
+    CustomUser.Role.TELLER,
+}
+
+
+def _has_role(user, roles):
+    return bool(user and user.is_authenticated and user.role in roles)
 
 
 class LoanProductViewSet(viewsets.ModelViewSet):
@@ -39,13 +65,18 @@ class LoanProductViewSet(viewsets.ModelViewSet):
         )
         user = self.request.user
 
-        if is_super_admin(user):
+        if user.role == CustomUser.Role.SUPER_ADMIN:
             return
 
         if not user.institution_id or not institution or institution.pk != user.institution_id:
             raise PermissionDenied("You cannot manage loan products outside your institution.")
 
+    def _require_manage_role(self):
+        if not _has_role(self.request.user, LOAN_PRODUCT_MANAGE_ROLES):
+            raise PermissionDenied("You do not have permission to manage loan products.")
+
     def perform_create(self, serializer):
+        self._require_manage_role()
         self._validate_scope(serializer)
         product = serializer.save()
         AuditService.log(
@@ -56,6 +87,7 @@ class LoanProductViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
+        self._require_manage_role()
         self._validate_scope(serializer)
         product = serializer.save()
         AuditService.log(
@@ -66,6 +98,7 @@ class LoanProductViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
+        self._require_manage_role()
         if instance.loanapplication_set.exists():
             raise ValidationError("Loan products with applications cannot be deleted.")
 
@@ -79,11 +112,6 @@ class LoanProductViewSet(viewsets.ModelViewSet):
             metadata={"code": code},
         )
 
-    def get_permissions(self):
-        if self.action in {"create", "update", "partial_update", "destroy"}:
-            return [IsLoanRole()]
-        return super().get_permissions()
-
 
 class LoanApplicationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -95,6 +123,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         "purpose",
         "product__name",
         "product__code",
+        "disbursement_reference",
     ]
     ordering_fields = ["created_at", "updated_at", "amount", "term_months", "status"]
     ordering = ["-created_at"]
@@ -124,19 +153,32 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         if product and not loan_products_for_user(user).filter(pk=product.pk).exists():
             raise PermissionDenied("You cannot use a loan product outside your scope.")
 
+        if user.role == CustomUser.Role.CLIENT and client and client.user_id != user.id:
+            raise PermissionDenied("Client users can only manage their own loan applications.")
+
+    def _require_roles(self, roles, message):
+        if not _has_role(self.request.user, roles):
+            raise PermissionDenied(message)
+
     def perform_create(self, serializer):
+        user = self.request.user
+        if user.role != CustomUser.Role.CLIENT:
+            self._require_roles(
+                LOAN_CREATE_ROLES,
+                "You do not have permission to create loan applications.",
+            )
+
         self._validate_scope(serializer)
         loan = serializer.save()
-        AuditService.log(
-            user=self.request.user,
-            action="loan.application.create",
-            target=str(loan.id),
-            metadata={
-                "client_id": str(loan.client_id),
-                "product_id": str(loan.product_id),
-                "amount": str(loan.amount),
-            },
+        submit_requested = user.role == CustomUser.Role.CLIENT or str(
+            self.request.data.get("submit", "")
+        ).lower() in {"1", "true", "yes", "on"}
+        loan = LoanService.initialize_new_application(
+            loan=loan,
+            created_by=user,
+            submit=submit_requested,
         )
+        serializer.instance = loan
 
     def perform_update(self, serializer):
         self._validate_scope(serializer)
@@ -149,8 +191,8 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
-        if instance.status != instance.Status.PENDING:
-            raise ValidationError("Only pending loan applications can be deleted.")
+        if instance.status != instance.Status.DRAFT:
+            raise ValidationError("Only draft loan applications can be deleted.")
 
         loan_id = str(instance.id)
         instance.delete()
@@ -160,42 +202,101 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             target=loan_id,
         )
 
-    def get_permissions(self):
-        if self.action in {"create", "update", "partial_update", "destroy", "approve", "reject"}:
-            return [IsLoanRole()]
-        if self.action in {"disburse", "repay"}:
-            return [IsCashRole()]
-        return super().get_permissions()
+    @decorators.action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        loan = self.get_object()
+        if request.user.role != CustomUser.Role.CLIENT:
+            self._require_roles(
+                LOAN_CREATE_ROLES,
+                "You do not have permission to submit loan applications.",
+            )
+        loan = LoanService.submit(loan=loan, user=request.user)
+        return response.Response(self.get_serializer(loan).data)
+
+    @decorators.action(detail=True, methods=["post"], url_path="start-review")
+    def start_review(self, request, pk=None):
+        self._require_roles(
+            LOAN_REVIEW_ROLES,
+            "You do not have permission to review loan applications.",
+        )
+        serializer = LoanActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        loan = LoanService.start_review(
+            loan=self.get_object(),
+            user=request.user,
+            comment=serializer.validated_data.get("comment", ""),
+        )
+        return response.Response(self.get_serializer(loan).data)
+
+    @decorators.action(detail=True, methods=["post"])
+    def recommend(self, request, pk=None):
+        self._require_roles(
+            LOAN_REVIEW_ROLES,
+            "You do not have permission to recommend loan applications.",
+        )
+        serializer = LoanActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        loan = LoanService.recommend(
+            loan=self.get_object(),
+            user=request.user,
+            comment=serializer.validated_data.get("comment", ""),
+        )
+        return response.Response(self.get_serializer(loan).data)
 
     @decorators.action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        loan = LoanService.approve(loan=self.get_object(), user=request.user)
+        self._require_roles(
+            LOAN_APPROVER_ROLES,
+            "You do not have permission to approve loan applications.",
+        )
+        serializer = LoanActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        loan = LoanService.approve(
+            loan=self.get_object(),
+            user=request.user,
+            comment=serializer.validated_data.get("comment", ""),
+            override=serializer.validated_data.get("override", False),
+        )
         return response.Response(self.get_serializer(loan).data)
 
     @decorators.action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
+        self._require_roles(
+            LOAN_REJECTION_ROLES,
+            "You do not have permission to reject loan applications.",
+        )
         serializer = LoanActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         loan = LoanService.reject(
             loan=self.get_object(),
             user=request.user,
             reason=serializer.validated_data.get("reason", ""),
+            comment=serializer.validated_data.get("comment", ""),
         )
         return response.Response(self.get_serializer(loan).data)
 
     @decorators.action(detail=True, methods=["post"])
     def disburse(self, request, pk=None):
+        self._require_roles(
+            CASH_COLLECTION_ROLES,
+            "You do not have permission to disburse loans.",
+        )
         serializer = LoanActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         loan = LoanService.disburse(
             loan=self.get_object(),
             user=request.user,
             reference=serializer.validated_data.get("reference") or f"DISB-{pk}",
+            disbursement_method=serializer.validated_data.get("disbursement_method", ""),
         )
         return response.Response(self.get_serializer(loan).data)
 
     @decorators.action(detail=True, methods=["post"])
     def repay(self, request, pk=None):
+        self._require_roles(
+            CASH_COLLECTION_ROLES,
+            "You do not have permission to record loan repayments.",
+        )
         serializer = LoanRepaymentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         repayment = LoanService.repay(
@@ -227,7 +328,12 @@ class LoanRepaymentViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = LoanRepaymentSerializer
     permission_classes = [IsAuthenticated]
     filterset_fields = ["loan", "loan__client", "loan__client__branch", "loan__client__institution"]
-    search_fields = ["reference", "loan__client__member_number"]
+    search_fields = [
+        "reference",
+        "loan__client__member_number",
+        "loan__client__first_name",
+        "loan__client__last_name",
+    ]
     ordering_fields = ["created_at", "amount", "reference"]
     ordering = ["-created_at"]
 
@@ -235,6 +341,6 @@ class LoanRepaymentViewSet(viewsets.ReadOnlyModelViewSet):
         loan_ids = loans_for_user(self.request.user).values_list("id", flat=True)
         return (
             LoanRepayment.objects.filter(loan_id__in=loan_ids)
-            .select_related("loan", "received_by")
+            .select_related("loan", "loan__client", "received_by")
             .order_by("-created_at")
         )

@@ -8,6 +8,15 @@ from apps.common.models import TimeStampedModel
 
 
 class LoanProduct(TimeStampedModel):
+    class InterestMethod(models.TextChoices):
+        FLAT = "flat", "Flat"
+        REDUCING_BALANCE = "reducing_balance", "Reducing Balance"
+
+    class RepaymentFrequency(models.TextChoices):
+        MONTHLY = "monthly", "Monthly"
+        BIWEEKLY = "biweekly", "Biweekly"
+        WEEKLY = "weekly", "Weekly"
+
     institution = models.ForeignKey(
         "institutions.Institution",
         on_delete=models.PROTECT,
@@ -18,8 +27,26 @@ class LoanProduct(TimeStampedModel):
     min_amount = models.DecimalField(max_digits=14, decimal_places=2)
     max_amount = models.DecimalField(max_digits=14, decimal_places=2)
     annual_interest_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    interest_method = models.CharField(
+        max_length=30,
+        choices=InterestMethod.choices,
+        default=InterestMethod.FLAT,
+    )
+    repayment_frequency = models.CharField(
+        max_length=20,
+        choices=RepaymentFrequency.choices,
+        default=RepaymentFrequency.MONTHLY,
+    )
     min_term_months = models.PositiveIntegerField(default=1)
     max_term_months = models.PositiveIntegerField(default=24)
+    default_term_months = models.PositiveIntegerField(null=True, blank=True)
+    penalty_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0.00"))
+    penalty_flat_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    penalty_grace_days = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
     class Meta(TimeStampedModel.Meta):
@@ -49,6 +76,19 @@ class LoanProduct(TimeStampedModel):
                 condition=Q(max_term_months__gte=models.F("min_term_months")),
                 name="loan_product_term_range_valid",
             ),
+            models.CheckConstraint(
+                condition=Q(default_term_months__isnull=True)
+                | Q(default_term_months__gt=0),
+                name="loan_product_default_term_positive_or_null",
+            ),
+            models.CheckConstraint(
+                condition=Q(penalty_rate__gte=0),
+                name="loan_product_penalty_rate_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=Q(penalty_flat_amount__gte=0),
+                name="loan_product_penalty_flat_non_negative",
+            ),
         ]
         indexes = [
             models.Index(fields=["institution", "is_active"], name="loan_prod_inst_active_idx"),
@@ -60,7 +100,10 @@ class LoanProduct(TimeStampedModel):
 
 class LoanApplication(TimeStampedModel):
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        UNDER_REVIEW = "under_review", "Under Review"
+        RECOMMENDED = "recommended", "Recommended"
         APPROVED = "approved", "Approved"
         REJECTED = "rejected", "Rejected"
         DISBURSED = "disbursed", "Disbursed"
@@ -78,8 +121,50 @@ class LoanApplication(TimeStampedModel):
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
-        default=Status.PENDING,
+        default=Status.DRAFT,
     )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_loan_applications",
+    )
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="submitted_loan_applications",
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    recommended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recommended_loan_applications",
+    )
+    recommended_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="rejected_loan_applications",
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    disbursed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="disbursed_loan_applications",
+    )
+    disbursement_method = models.CharField(max_length=40, blank=True)
+    disbursement_reference = models.CharField(max_length=80, blank=True)
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -215,6 +300,17 @@ class LoanRepayment(TimeStampedModel):
         decimal_places=2,
         default=Decimal("0.00"),
     )
+    penalty_component = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    remaining_balance_after = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    payment_method = models.CharField(max_length=40, blank=True)
     reference = models.CharField(max_length=80, unique=True)
     received_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -237,6 +333,14 @@ class LoanRepayment(TimeStampedModel):
                 condition=Q(interest_component__gte=0),
                 name="loan_repayment_interest_non_negative",
             ),
+            models.CheckConstraint(
+                condition=Q(penalty_component__gte=0),
+                name="loan_repayment_penalty_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=Q(remaining_balance_after__gte=0),
+                name="loan_repayment_remaining_balance_non_negative",
+            ),
         ]
         indexes = [
             models.Index(fields=["loan", "created_at"], name="loan_repay_loan_created_idx"),
@@ -244,3 +348,43 @@ class LoanRepayment(TimeStampedModel):
 
     def __str__(self):
         return self.reference
+
+
+class LoanApplicationAction(TimeStampedModel):
+    class Action(models.TextChoices):
+        CREATE = "create", "Create"
+        SUBMIT = "submit", "Submit"
+        START_REVIEW = "start_review", "Start Review"
+        RECOMMEND = "recommend", "Recommend"
+        APPROVE = "approve", "Approve"
+        REJECT = "reject", "Reject"
+        DISBURSE = "disburse", "Disburse"
+        REPAY = "repay", "Repay"
+
+    application = models.ForeignKey(
+        LoanApplication,
+        on_delete=models.CASCADE,
+        related_name="action_history",
+    )
+    action = models.CharField(max_length=30, choices=Action.choices)
+    from_status = models.CharField(max_length=20, blank=True)
+    to_status = models.CharField(max_length=20, blank=True)
+    acted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="loan_application_actions",
+    )
+    comment = models.TextField(blank=True)
+    reference = models.CharField(max_length=80, blank=True)
+
+    class Meta(TimeStampedModel.Meta):
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["application", "created_at"]),
+            models.Index(fields=["action", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.application_id} - {self.action}"

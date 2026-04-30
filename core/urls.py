@@ -44,6 +44,11 @@ urlpatterns = [
         RedirectView.as_view(pattern_name="swagger-ui", permanent=False),
         name="swagger-ui-legacy",
     ),
+    path(
+        "api/me/",
+        RedirectView.as_view(pattern_name="me", permanent=False),
+        name="me-legacy",
+    ),
 ]
 
 # Serve static/media only in development

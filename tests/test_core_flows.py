@@ -90,6 +90,14 @@ def test_loan_approval_disbursement_and_repayment():
         institution=inst,
         branch=branch,
     )
+    manager = User.objects.create_user(
+        email="manager@example.com",
+        username="manager",
+        password="x",
+        role="branch_manager",
+        institution=inst,
+        branch=branch,
+    )
     client = Client.objects.create(
         institution=inst,
         branch=branch,
@@ -108,7 +116,9 @@ def test_loan_approval_disbursement_and_repayment():
         max_term_months=12,
     )
     loan = LoanApplication.objects.create(client=client, product=product, amount=600, term_months=6)
-    LoanService.approve(loan=loan, user=officer)
+    LoanService.initialize_new_application(loan=loan, created_by=officer, submit=True)
+    LoanService.recommend(loan=loan, user=officer)
+    LoanService.approve(loan=loan, user=manager)
     LoanService.disburse(loan=loan, user=officer, reference="DISB-1")
     loan.refresh_from_db()
     assert loan.status == "disbursed"

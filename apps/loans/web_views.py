@@ -60,7 +60,12 @@ class LoansWebScopeMixin(LoginRequiredMixin):
             "can_manage_loans": self.can_manage_loans(),
             "can_manage_cash": self.can_manage_cash(),
             "can_approve_or_reject": self.can_manage_loans()
-            and loan.status == LoanApplication.Status.PENDING,
+            and loan.status
+            in {
+                LoanApplication.Status.SUBMITTED,
+                LoanApplication.Status.UNDER_REVIEW,
+                LoanApplication.Status.RECOMMENDED,
+            },
             "can_disburse": self.can_manage_cash()
             and loan.status == LoanApplication.Status.APPROVED,
             "can_repay": self.can_manage_cash()
@@ -160,7 +165,15 @@ class LoanApplicationListView(LoansWebScopeMixin, ListView):
         context = super().get_context_data(**kwargs)
         summary = self.filtered_queryset.aggregate(
             application_count=Count("id"),
-            pending_count=Count("id", filter=Q(status=LoanApplication.Status.PENDING)),
+            pending_count=Count(
+                "id",
+                filter=Q(
+                    status__in=[
+                        LoanApplication.Status.SUBMITTED,
+                        LoanApplication.Status.UNDER_REVIEW,
+                    ]
+                ),
+            ),
             disbursed_count=Count("id", filter=Q(status=LoanApplication.Status.DISBURSED)),
             outstanding_principal=Coalesce(
                 Sum("principal_balance"),

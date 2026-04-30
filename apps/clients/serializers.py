@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from django.db.models import Count, DecimalField, Q, Sum, Value
@@ -10,7 +11,7 @@ from apps.savings.models import SavingsTransaction
 from apps.transactions.models import Transaction
 from apps.users.models import CustomUser
 
-from .models import Client
+from .models import Client, GenderChoices
 
 ZERO_DECIMAL = Decimal("0.00")
 
@@ -32,12 +33,17 @@ def coalesced_sum(field_name, *, filter_condition=None):
 
 
 class ClientSerializer(serializers.ModelSerializer):
+    client_number = serializers.CharField(source="member_number", read_only=True)
     full_name = serializers.SerializerMethodField()
     institution_name = serializers.CharField(source="institution.name", read_only=True)
     institution_code = serializers.CharField(source="institution.code", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     branch_code = serializers.CharField(source="branch.code", read_only=True)
     user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True)
+    user_full_name = serializers.SerializerMethodField()
+    created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
+    updated_by_email = serializers.EmailField(source="updated_by.email", read_only=True)
 
     class Meta:
         model = Client
@@ -45,6 +51,8 @@ class ClientSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "user_email",
+            "user_username",
+            "user_full_name",
             "institution",
             "institution_name",
             "institution_code",
@@ -52,30 +60,43 @@ class ClientSerializer(serializers.ModelSerializer):
             "branch_name",
             "branch_code",
             "member_number",
+            "client_number",
             "first_name",
             "last_name",
             "full_name",
             "phone",
             "email",
             "national_id",
+            "gender",
             "date_of_birth",
             "address",
             "occupation",
             "next_of_kin_name",
             "next_of_kin_phone",
             "status",
+            "created_by",
+            "created_by_email",
+            "updated_by",
+            "updated_by_email",
             "created_at",
             "updated_at",
         )
         read_only_fields = (
             "id",
             "member_number",
+            "client_number",
             "full_name",
             "institution_name",
             "institution_code",
             "branch_name",
             "branch_code",
             "user_email",
+            "user_username",
+            "user_full_name",
+            "created_by",
+            "created_by_email",
+            "updated_by",
+            "updated_by_email",
             "created_at",
             "updated_at",
         )
@@ -83,6 +104,7 @@ class ClientSerializer(serializers.ModelSerializer):
             "user": {"required": False, "allow_null": True},
             "email": {"required": False, "allow_blank": True},
             "national_id": {"required": False, "allow_blank": True},
+            "gender": {"required": False, "allow_blank": True},
             "address": {"required": False, "allow_blank": True},
             "occupation": {"required": False, "allow_blank": True},
             "next_of_kin_name": {"required": False, "allow_blank": True},
@@ -91,6 +113,11 @@ class ClientSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_user_full_name(self, obj):
+        if not obj.user_id:
+            return ""
+        return obj.user.get_full_name().strip() or obj.user.username or obj.user.email
 
     def validate_first_name(self, value):
         first_name = value.strip()
@@ -115,6 +142,21 @@ class ClientSerializer(serializers.ModelSerializer):
 
     def validate_national_id(self, value):
         return value.strip()
+
+    def validate_gender(self, value):
+        if not value:
+            return ""
+
+        gender = value.strip().lower()
+        allowed_values = {choice for choice, _ in GenderChoices.choices}
+        if gender not in allowed_values:
+            raise serializers.ValidationError("Select a valid gender option.")
+        return gender
+
+    def validate_date_of_birth(self, value):
+        if value and value > date.today():
+            raise serializers.ValidationError("Date of birth cannot be in the future.")
+        return value
 
     def validate_address(self, value):
         return value.strip()
@@ -144,32 +186,89 @@ class ClientSerializer(serializers.ModelSerializer):
                 {"branch": ["Selected branch does not belong to the selected institution."]}
             )
 
-        if user and user.role != CustomUser.Role.CLIENT:
-            raise serializers.ValidationError(
-                {"user": ["Only self-service users with the client role can be linked."]}
+        if user:
+            if user.role != CustomUser.Role.CLIENT:
+                raise serializers.ValidationError(
+                    {"user": ["Only self-service users with the client role can be linked."]}
+                )
+
+            if not user.is_active:
+                raise serializers.ValidationError(
+                    {"user": ["Inactive user accounts cannot be linked to a client."]}
+                )
+
+            linked_client_exists = Client.objects.filter(user=user).exclude(
+                pk=getattr(self.instance, "pk", None)
             )
+            if linked_client_exists.exists():
+                raise serializers.ValidationError(
+                    {"user": ["This user account is already linked to another client."]}
+                )
+
+            if user.institution_id and user.institution_id != institution.id:
+                raise serializers.ValidationError(
+                    {
+                        "user": [
+                            "The selected user belongs to a different institution."
+                        ]
+                    }
+                )
+
+            if user.branch_id and user.branch_id != branch.id:
+                raise serializers.ValidationError(
+                    {"user": ["The selected user belongs to a different branch."]}
+                )
 
         return attrs
 
+    def _sync_linked_user_scope(self, client):
+        user = client.user
+        if not user:
+            return
+
+        fields_to_update = []
+        if user.institution_id != client.institution_id:
+            user.institution = client.institution
+            fields_to_update.append("institution")
+        if user.branch_id != client.branch_id:
+            user.branch = client.branch
+            fields_to_update.append("branch")
+        if fields_to_update:
+            user.save(update_fields=fields_to_update)
+
+    def create(self, validated_data):
+        client = super().create(validated_data)
+        self._sync_linked_user_scope(client)
+        return client
+
+    def update(self, instance, validated_data):
+        client = super().update(instance, validated_data)
+        self._sync_linked_user_scope(client)
+        return client
+
 
 class ClientSelfServiceUpdateSerializer(serializers.ModelSerializer):
+    def to_internal_value(self, data):
+        unexpected_fields = sorted(set(data.keys()) - set(self.fields.keys()))
+        if unexpected_fields:
+            raise serializers.ValidationError(
+                {
+                    field_name: ["This field is not allowed."]
+                    for field_name in unexpected_fields
+                }
+            )
+        return super().to_internal_value(data)
+
     class Meta:
         model = Client
         fields = (
             "phone",
             "email",
-            "date_of_birth",
             "address",
-            "occupation",
-            "next_of_kin_name",
-            "next_of_kin_phone",
         )
         extra_kwargs = {
             "email": {"required": False, "allow_blank": True},
             "address": {"required": False, "allow_blank": True},
-            "occupation": {"required": False, "allow_blank": True},
-            "next_of_kin_name": {"required": False, "allow_blank": True},
-            "next_of_kin_phone": {"required": False, "allow_blank": True},
         }
 
     def validate_phone(self, value):
@@ -182,15 +281,6 @@ class ClientSelfServiceUpdateSerializer(serializers.ModelSerializer):
         return value.strip().lower()
 
     def validate_address(self, value):
-        return value.strip()
-
-    def validate_occupation(self, value):
-        return value.strip()
-
-    def validate_next_of_kin_name(self, value):
-        return value.strip()
-
-    def validate_next_of_kin_phone(self, value):
         return value.strip()
 
 
@@ -281,7 +371,9 @@ class ClientDetailSerializer(ClientSerializer):
 
     def get_loans_summary(self, obj):
         open_statuses = [
-            LoanApplication.Status.PENDING,
+            LoanApplication.Status.SUBMITTED,
+            LoanApplication.Status.UNDER_REVIEW,
+            LoanApplication.Status.RECOMMENDED,
             LoanApplication.Status.APPROVED,
             LoanApplication.Status.DISBURSED,
         ]
@@ -334,3 +426,39 @@ class ClientDetailSerializer(ClientSerializer):
     def get_recent_transactions(self, obj):
         transactions = Transaction.objects.filter(client=obj).order_by("-created_at")[:5]
         return ClientRecentTransactionSerializer(transactions, many=True).data
+
+
+class LinkableClientUserSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    institution_name = serializers.CharField(source="institution.name", read_only=True)
+    institution_code = serializers.CharField(source="institution.code", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True)
+    branch_code = serializers.CharField(source="branch.code", read_only=True)
+    linked_client_id = serializers.UUIDField(source="client_profile.id", read_only=True)
+    linked_client_member_number = serializers.CharField(
+        source="client_profile.member_number",
+        read_only=True,
+    )
+
+    class Meta:
+        model = CustomUser
+        fields = (
+            "id",
+            "email",
+            "username",
+            "full_name",
+            "institution",
+            "institution_name",
+            "institution_code",
+            "branch",
+            "branch_name",
+            "branch_code",
+            "is_active",
+            "is_email_verified",
+            "linked_client_id",
+            "linked_client_member_number",
+        )
+        read_only_fields = fields
+
+    def get_full_name(self, obj):
+        return obj.get_full_name().strip() or obj.username or obj.email

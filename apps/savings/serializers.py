@@ -13,12 +13,19 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
     account_number = serializers.CharField(source="account.account_number", read_only=True)
     client_id = serializers.UUIDField(source="account.client_id", read_only=True)
     client_name = serializers.SerializerMethodField()
+    client_phone = serializers.CharField(source="account.client.phone", read_only=True)
     branch_name = serializers.CharField(source="account.client.branch.name", read_only=True)
     institution_name = serializers.CharField(
         source="account.client.institution.name",
         read_only=True,
     )
     performed_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
+    recorded_by = serializers.UUIDField(source="performed_by_id", read_only=True)
+    recorded_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
+    recorded_at = serializers.DateTimeField(source="created_at", read_only=True)
+    transaction_type = serializers.CharField(source="type", read_only=True)
+    type_label = serializers.CharField(source="get_type_display", read_only=True)
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = SavingsTransaction
@@ -28,14 +35,21 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
             "account_number",
             "client_id",
             "client_name",
+            "client_phone",
             "branch_name",
             "institution_name",
             "type",
+            "transaction_type",
+            "type_label",
+            "status",
             "amount",
             "balance_after",
             "reference",
             "performed_by",
             "performed_by_email",
+            "recorded_by",
+            "recorded_by_email",
+            "recorded_at",
             "notes",
             "created_at",
             "updated_at",
@@ -46,10 +60,14 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
         client = obj.account.client
         return f"{client.first_name} {client.last_name}".strip()
 
+    def get_status(self, obj):
+        return "posted"
+
 
 class SavingsAccountSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField()
     client_member_number = serializers.CharField(source="client.member_number", read_only=True)
+    client_phone = serializers.CharField(source="client.phone", read_only=True)
     branch_id = serializers.UUIDField(source="client.branch_id", read_only=True)
     branch_name = serializers.CharField(source="client.branch.name", read_only=True)
     institution_id = serializers.UUIDField(source="client.institution_id", read_only=True)
@@ -64,6 +82,7 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
             "client",
             "client_name",
             "client_member_number",
+            "client_phone",
             "branch_id",
             "branch_name",
             "institution_id",
@@ -80,6 +99,7 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
             "id",
             "client_name",
             "client_member_number",
+            "client_phone",
             "branch_id",
             "branch_name",
             "institution_id",

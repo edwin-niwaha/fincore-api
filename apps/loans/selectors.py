@@ -25,6 +25,11 @@ def loan_products_for_user(user):
     if not user or not user.is_authenticated:
         return queryset.none()
 
+    if user.role == CustomUser.Role.CLIENT:
+        if user.institution_id:
+            return queryset.filter(institution=user.institution, is_active=True)
+        return queryset.none()
+
     if user.role == CustomUser.Role.SUPER_ADMIN:
         return queryset
 
@@ -42,7 +47,12 @@ def loans_for_user(user):
             "product__institution",
             "client__institution",
             "client__branch",
+            "created_by",
+            "submitted_by",
+            "recommended_by",
             "approved_by",
+            "rejected_by",
+            "disbursed_by",
         )
         .annotate(
             repayment_count=Count("repayments", distinct=True),

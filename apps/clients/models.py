@@ -3,7 +3,20 @@ from django.db import models, transaction
 from django.db.models import F
 from django.utils.text import slugify
 
-from apps.common.models import StatusChoices, TimeStampedModel
+from apps.common.models import TimeStampedModel
+
+
+class ClientStatusChoices(models.TextChoices):
+    ACTIVE = "active", "Active"
+    INACTIVE = "inactive", "Inactive"
+    BLACKLISTED = "blacklisted", "Blacklisted"
+
+
+class GenderChoices(models.TextChoices):
+    FEMALE = "female", "Female"
+    MALE = "male", "Male"
+    OTHER = "other", "Other"
+    PREFER_NOT_TO_SAY = "prefer_not_to_say", "Prefer Not To Say"
 
 
 def build_member_number_prefix(branch):
@@ -63,6 +76,7 @@ class Client(TimeStampedModel):
     phone = models.CharField(max_length=40)
     email = models.EmailField(blank=True)
     national_id = models.CharField(max_length=80, blank=True)
+    gender = models.CharField(max_length=20, choices=GenderChoices.choices, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     address = models.TextField(blank=True)
     occupation = models.CharField(max_length=120, blank=True)
@@ -70,8 +84,22 @@ class Client(TimeStampedModel):
     next_of_kin_phone = models.CharField(max_length=40, blank=True)
     status = models.CharField(
         max_length=20,
-        choices=StatusChoices.choices,
-        default=StatusChoices.ACTIVE,
+        choices=ClientStatusChoices.choices,
+        default=ClientStatusChoices.ACTIVE,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_clients",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_clients",
     )
 
     def save(self, *args, **kwargs):

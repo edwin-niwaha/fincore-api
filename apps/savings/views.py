@@ -1,3 +1,5 @@
+from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date
 from rest_framework import decorators, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
@@ -28,12 +30,16 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
         "client__member_number",
         "client__first_name",
         "client__last_name",
+        "client__phone",
     ]
     ordering_fields = ["created_at", "updated_at", "account_number", "balance", "status"]
     ordering = ["account_number"]
 
     def get_queryset(self):
         return savings_accounts_for_user(self.request.user)
+
+    def _get_scoped_account(self, pk):
+        return get_object_or_404(self.get_queryset(), pk=pk)
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -101,7 +107,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
         serializer = SavingsOperationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         transaction_row = SavingsService.deposit(
-            account=self.get_object(),
+            account=self._get_scoped_account(pk),
             performed_by=request.user,
             **serializer.validated_data,
         )
@@ -115,7 +121,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
         serializer = SavingsOperationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         transaction_row = SavingsService.withdraw(
-            account=self.get_object(),
+            account=self._get_scoped_account(pk),
             performed_by=request.user,
             **serializer.validated_data,
         )
@@ -127,7 +133,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=True, methods=["get"])
     def transactions(self, request, pk=None):
         queryset = (
-            self.get_object()
+            self._get_scoped_account(pk)
             .transactions.select_related(
                 "performed_by",
                 "account__client__branch",
@@ -135,6 +141,34 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
             )
             .order_by("-created_at")
         )
+
+        transaction_type = request.query_params.get("type")
+        if transaction_type:
+            queryset = queryset.filter(type=transaction_type)
+
+        search_term = request.query_params.get("search", "").strip()
+        if search_term:
+            queryset = queryset.filter(reference__icontains=search_term)
+
+        from_date_raw = request.query_params.get("created_at__date__gte")
+        to_date_raw = request.query_params.get("created_at__date__lte")
+
+        if from_date_raw:
+            from_date = parse_date(from_date_raw)
+            if from_date is None:
+                raise ValidationError(
+                    {"created_at__date__gte": ["Use YYYY-MM-DD for the from date filter."]}
+                )
+            queryset = queryset.filter(created_at__date__gte=from_date)
+
+        if to_date_raw:
+            to_date = parse_date(to_date_raw)
+            if to_date is None:
+                raise ValidationError(
+                    {"created_at__date__lte": ["Use YYYY-MM-DD for the to date filter."]}
+                )
+            queryset = queryset.filter(created_at__date__lte=to_date)
+
         page = self.paginate_queryset(queryset)
         serializer = SavingsTransactionSerializer(page or queryset, many=True)
         if page is not None:
@@ -150,8 +184,16 @@ class SavingsTransactionViewSet(viewsets.ReadOnlyModelViewSet):
         "account__client": ["exact"],
         "account__client__branch": ["exact"],
         "account__client__institution": ["exact"],
+        "created_at": ["date__gte", "date__lte"],
     }
-    search_fields = ["reference", "account__account_number", "account__client__member_number"]
+    search_fields = [
+        "reference",
+        "account__account_number",
+        "account__client__member_number",
+        "account__client__first_name",
+        "account__client__last_name",
+        "account__client__phone",
+    ]
     ordering_fields = ["created_at", "amount", "reference"]
     ordering = ["-created_at"]
 
