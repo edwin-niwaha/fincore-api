@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models, transaction
 from django.db.models import F, Q
+from django.utils import timezone
 
 from apps.common.models import StatusChoices, TimeStampedModel
 
@@ -35,6 +36,44 @@ class SavingsAccountSequence(models.Model):
             return sequence.last_value
 
 
+class SavingsPolicy(TimeStampedModel):
+    """
+    Dynamic savings policy used when posting withdrawals.
+
+    Keep one active policy row. Admin users can update the minimum balance and
+    withdrawal charge any time from Django Admin or through the policy endpoint.
+    """
+
+    name = models.CharField(max_length=80, default="Default savings policy", unique=True)
+    minimum_balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    withdrawal_charge = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
+    is_active = models.BooleanField(default=True)
+
+    class Meta(TimeStampedModel.Meta):
+        verbose_name = "Savings policy"
+        verbose_name_plural = "Savings policies"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(minimum_balance__gte=0),
+                name="savings_policy_minimum_balance_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=Q(withdrawal_charge__gte=0),
+                name="savings_policy_withdrawal_charge_non_negative",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def current(cls):
+        policy = cls.objects.filter(is_active=True).order_by("-updated_at", "-created_at").first()
+        if policy:
+            return policy
+        return cls.objects.create(name="Default savings policy", is_active=True)
+
+
 class SavingsAccount(TimeStampedModel):
     client = models.ForeignKey(
         "clients.Client",
@@ -57,10 +96,7 @@ class SavingsAccount(TimeStampedModel):
             ),
         ]
         indexes = [
-            models.Index(
-                fields=["client", "status"],
-                name="sav_acc_client_status_idx",
-            ),
+            models.Index(fields=["client", "status"], name="sav_acc_client_status_idx"),
         ]
 
     def __str__(self):
@@ -77,13 +113,15 @@ class SavingsTransaction(TimeStampedModel):
     class Type(models.TextChoices):
         DEPOSIT = "deposit", "Deposit"
         WITHDRAWAL = "withdrawal", "Withdrawal"
+        WITHDRAWAL_CHARGE = "withdrawal_charge", "Withdrawal charge"
 
     account = models.ForeignKey(
         SavingsAccount,
         on_delete=models.PROTECT,
         related_name="transactions",
     )
-    type = models.CharField(max_length=20, choices=Type.choices)
+    type = models.CharField(max_length=30, choices=Type.choices)
+    transaction_date = models.DateField(default=timezone.localdate)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     balance_after = models.DecimalField(max_digits=14, decimal_places=2)
     reference = models.CharField(max_length=80, unique=True)
@@ -108,8 +146,8 @@ class SavingsTransaction(TimeStampedModel):
         ]
         indexes = [
             models.Index(
-                fields=["account", "type", "created_at"],
-                name="sav_tx_acct_type_created_idx",
+                fields=["account", "type", "transaction_date", "created_at"],
+                name="sav_tx_acct_type_txdate_idx",
             ),
         ]
 

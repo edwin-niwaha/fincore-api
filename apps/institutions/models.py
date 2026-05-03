@@ -1,3 +1,4 @@
+from cloudinary.models import CloudinaryField
 from django.db import models
 
 from apps.common.models import StatusChoices, TimeStampedModel
@@ -9,6 +10,28 @@ class Institution(TimeStampedModel):
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
     currency = models.CharField(max_length=8, default="UGX")
+
+    logo = CloudinaryField(
+        "institution_logo",
+        folder="institution-logos",
+        transformation={
+            "width": 300,
+            "height": 300,
+            "crop": "limit",
+            "quality": "auto",
+            "format": "png",
+        },
+        blank=True,
+        null=True,
+    )
+    postal_address = models.CharField(max_length=255, blank=True)
+    physical_address = models.CharField(max_length=255, blank=True)
+    website = models.CharField(max_length=120, blank=True)
+    statement_title = models.CharField(
+        max_length=120,
+        default="ACCOUNT STATEMENT",
+    )
+
     status = models.CharField(
         max_length=20,
         choices=StatusChoices.choices,

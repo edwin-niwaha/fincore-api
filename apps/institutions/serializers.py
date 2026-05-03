@@ -11,6 +11,11 @@ class InstitutionSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     branch_count = serializers.SerializerMethodField()
     active_branch_count = serializers.SerializerMethodField()
+    logo = serializers.ImageField(required=False, allow_null=True)
+    postal_address = serializers.CharField(required=False, allow_blank=True)
+    physical_address = serializers.CharField(required=False, allow_blank=True)
+    website = serializers.CharField(required=False, allow_blank=True)
+    statement_title = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Institution
@@ -21,6 +26,11 @@ class InstitutionSerializer(serializers.ModelSerializer):
             "email",
             "phone",
             "currency",
+            "logo",
+            "postal_address",
+            "physical_address",
+            "website",
+            "statement_title",
             "status",
             "display_name",
             "branch_count",
@@ -118,3 +128,26 @@ class BranchSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+
+
+class InstitutionStatementProfileSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Institution
+        fields = (
+            "name",
+            "logo_url",
+            "postal_address",
+            "physical_address",
+            "phone",
+            "email",
+            "website",
+            "statement_title",
+            "currency",
+        )
+
+    def get_logo_url(self, obj):
+        if obj.logo:
+            return obj.logo.url  # Cloudinary auto full URL
+        return ""

@@ -20,6 +20,7 @@ from apps.clients.self_service_views import (
     SelfServiceSavingsViewSet,
     SelfServiceTransactionViewSet,
 )
+from apps.shares.views import ShareAccountViewSet, ShareProductViewSet, ShareTransactionViewSet
 from apps.common.views import HealthCheckView
 from apps.dashboards.views import AdminDashboardView, ClientDashboardView, StaffDashboardView
 from apps.institutions.views import BranchViewSet, InstitutionViewSet
@@ -52,6 +53,9 @@ router.register("accounting/accounts", AccountViewSet, basename="account")
 router.register("accounting/journal-entries", JournalEntryViewSet, basename="journal-entry")
 router.register("savings/accounts", SavingsAccountViewSet, basename="savings-account")
 router.register("savings/transactions", SavingsTransactionViewSet, basename="savings-transaction")
+router.register("shares/products", ShareProductViewSet, basename="share-product")
+router.register("shares/accounts", ShareAccountViewSet, basename="share-account")
+router.register("shares/transactions", ShareTransactionViewSet, basename="share-transaction")
 router.register("loans/products", LoanProductViewSet, basename="loan-product")
 router.register("loans/applications", LoanApplicationViewSet, basename="loan-application")
 router.register("loans/repayments", LoanRepaymentViewSet, basename="loan-repayment")

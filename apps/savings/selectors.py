@@ -10,7 +10,7 @@ def savings_accounts_for_user(user):
         SavingsAccount.objects.select_related("client", "client__branch", "client__institution")
         .annotate(
             transaction_count=Count("transactions", distinct=True),
-            last_transaction_at=Max("transactions__created_at"),
+            last_transaction_at=Max("transactions__transaction_date"),
         )
         .order_by("account_number", "client__last_name", "client__first_name")
     )

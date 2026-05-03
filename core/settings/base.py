@@ -2,6 +2,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+import cloudinary
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -48,6 +49,7 @@ LOCAL_APPS = [
     "apps.transactions",
     "apps.notifications",
     "apps.audit",
+    "apps.shares",
     "apps.dashboards",
     "apps.reports",
 ]
@@ -165,7 +167,16 @@ if ENABLE_CLOUDINARY:
         "CLOUD_NAME": CLOUDINARY_CLOUD_NAME,
         "API_KEY": CLOUDINARY_API_KEY,
         "API_SECRET": CLOUDINARY_API_SECRET,
+        "SECURE": True,
     }
+
+    # CloudinaryField uses the cloudinary SDK directly, so configure it explicitly.
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
 
     MEDIA_URL = f"https://res.cloudinary.com/{CLOUDINARY_CLOUD_NAME}/"
 

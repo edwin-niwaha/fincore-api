@@ -11,21 +11,6 @@ urlpatterns = [
 
     # API v1
     path("api/v1/", include("api.v1.urls")),
-    path(
-        "web/savings/",
-        include(("apps.savings.web_urls", "savings_web"), namespace="savings_web"),
-    ),
-    path(
-        "web/loans/",
-        include(("apps.loans.web_urls", "loans_web"), namespace="loans_web"),
-    ),
-    path(
-        "web/transactions/",
-        include(
-            ("apps.transactions.web_urls", "transactions_web"),
-            namespace="transactions_web",
-        ),
-    ),
 
     # API Docs (important for frontend + testing)
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),

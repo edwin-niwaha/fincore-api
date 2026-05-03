@@ -22,13 +22,50 @@ class InstitutionAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("status", "currency")
-    search_fields = ("name", "code", "email", "phone")
+    search_fields = (
+        "name",
+        "code",
+        "email",
+        "phone",
+        "postal_address",
+        "physical_address",
+        "website",
+    )
     ordering = ("name",)
     inlines = [BranchInline]
+
+    fieldsets = (
+        (
+            "Basic details",
+            {
+                "fields": (
+                    "name",
+                    "code",
+                    "email",
+                    "phone",
+                    "currency",
+                    "status",
+                )
+            },
+        ),
+        (
+            "Statement / PDF profile",
+            {
+                "fields": (
+                    "logo",
+                    "postal_address",
+                    "physical_address",
+                    "website",
+                    "statement_title",
+                )
+            },
+        ),
+    )
 
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(_branch_count=Count("branches"))
 
+    @admin.display(description="Branches")
     def branch_count(self, obj):
         return getattr(obj, "_branch_count", 0)
 

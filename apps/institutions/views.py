@@ -1,13 +1,18 @@
 from django.db.models import Count, Q
-from rest_framework import viewsets
+from rest_framework import decorators, response, viewsets
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated
 
 from apps.common.models import StatusChoices
 from apps.common.permissions import IsAdminRole
 from apps.users.models import CustomUser
 
 from .models import Branch, Institution
-from .serializers import BranchSerializer, InstitutionSerializer
+from .serializers import (
+    BranchSerializer,
+    InstitutionSerializer,
+    InstitutionStatementProfileSerializer,
+)
 
 
 def is_super_admin(user):
@@ -33,7 +38,15 @@ class InstitutionViewSet(viewsets.ModelViewSet):
     serializer_class = InstitutionSerializer
     permission_classes = [IsAdminRole]
     filterset_fields = ["status", "currency"]
-    search_fields = ["name", "code", "email", "phone"]
+    search_fields = [
+        "name",
+        "code",
+        "email",
+        "phone",
+        "postal_address",
+        "physical_address",
+        "website",
+    ]
     ordering_fields = ["name", "code", "created_at", "status"]
     ordering = ["name"]
 
@@ -57,6 +70,11 @@ class InstitutionViewSet(viewsets.ModelViewSet):
 
         return queryset.none()
 
+    def get_permissions(self):
+        if self.action == "statement_profile":
+            return [IsAuthenticated()]
+        return [permission() for permission in self.permission_classes]
+
     def create(self, request, *args, **kwargs):
         if not is_super_admin(request.user):
             raise PermissionDenied("Only super admins can create institutions.")
@@ -66,6 +84,31 @@ class InstitutionViewSet(viewsets.ModelViewSet):
         if not is_super_admin(request.user):
             raise PermissionDenied("Only super admins can delete institutions.")
         return super().destroy(request, *args, **kwargs)
+
+    @decorators.action(
+        detail=False,
+        methods=["get"],
+        url_path="statement-profile",
+    )
+    def statement_profile(self, request):
+        institution = (
+            getattr(request.user, "institution", None)
+            or getattr(getattr(request.user, "client_profile", None), "institution", None)
+        )
+
+        if not institution and is_super_admin(request.user):
+            institution = Institution.objects.filter(
+                status=StatusChoices.ACTIVE,
+            ).order_by("name").first()
+
+        if not institution:
+            return response.Response({"detail": "No institution found."}, status=404)
+
+        serializer = InstitutionStatementProfileSerializer(
+            institution,
+            context={"request": request},
+        )
+        return response.Response(serializer.data)
 
 
 class BranchViewSet(viewsets.ModelViewSet):
@@ -101,7 +144,10 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
-        institution = serializer.validated_data.get("institution", serializer.instance.institution)
+        institution = serializer.validated_data.get(
+            "institution",
+            serializer.instance.institution,
+        )
         user = self.request.user
 
         if is_institution_admin(user) and institution.pk != user.institution_id:

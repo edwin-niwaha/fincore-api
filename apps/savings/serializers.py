@@ -1,12 +1,38 @@
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.common.models import StatusChoices
 
-from .models import SavingsAccount, SavingsTransaction
+from .models import SavingsAccount, SavingsPolicy, SavingsTransaction
 
 ZERO_DECIMAL = Decimal("0.00")
+
+
+class SavingsPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavingsPolicy
+        fields = (
+            "id",
+            "name",
+            "minimum_balance",
+            "withdrawal_charge",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    def validate_minimum_balance(self, value):
+        if value < ZERO_DECIMAL:
+            raise serializers.ValidationError("Minimum balance cannot be negative.")
+        return value
+
+    def validate_withdrawal_charge(self, value):
+        if value < ZERO_DECIMAL:
+            raise serializers.ValidationError("Withdrawal charge cannot be negative.")
+        return value
 
 
 class SavingsTransactionSerializer(serializers.ModelSerializer):
@@ -15,10 +41,7 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField()
     client_phone = serializers.CharField(source="account.client.phone", read_only=True)
     branch_name = serializers.CharField(source="account.client.branch.name", read_only=True)
-    institution_name = serializers.CharField(
-        source="account.client.institution.name",
-        read_only=True,
-    )
+    institution_name = serializers.CharField(source="account.client.institution.name", read_only=True)
     performed_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
     recorded_by = serializers.UUIDField(source="performed_by_id", read_only=True)
     recorded_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
@@ -42,6 +65,7 @@ class SavingsTransactionSerializer(serializers.ModelSerializer):
             "transaction_type",
             "type_label",
             "status",
+            "transaction_date",
             "amount",
             "balance_after",
             "reference",
@@ -124,9 +148,11 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
         last_transaction_at = getattr(obj, "last_transaction_at", None)
         if last_transaction_at is not None:
             return last_transaction_at
-
-        transaction = obj.transactions.order_by("-created_at").only("created_at").first()
-        return getattr(transaction, "created_at", None)
+        transaction = obj.transactions.order_by("-transaction_date", "-created_at").only(
+            "transaction_date",
+            "created_at",
+        ).first()
+        return getattr(transaction, "transaction_date", None) or getattr(transaction, "created_at", None)
 
     def validate(self, attrs):
         client = attrs.get("client") or getattr(self.instance, "client", None)
@@ -145,11 +171,7 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
                 {"client": ["Accounts with transaction history cannot be reassigned."]}
             )
 
-        if (
-            self.instance
-            and status == StatusChoices.CLOSED
-            and self.instance.balance > ZERO_DECIMAL
-        ):
+        if self.instance and status == StatusChoices.CLOSED and self.instance.balance > ZERO_DECIMAL:
             raise serializers.ValidationError(
                 {"status": ["Accounts with a positive balance cannot be closed."]}
             )
@@ -169,13 +191,14 @@ class SavingsAccountDetailSerializer(SavingsAccountSerializer):
             "performed_by",
             "account__client__branch",
             "account__client__institution",
-        ).order_by("-created_at")[:10]
+        ).order_by("-transaction_date", "-created_at")[:10]
         return SavingsTransactionSerializer(queryset, many=True).data
 
 
 class SavingsOperationSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     reference = serializers.CharField(max_length=80)
+    transaction_date = serializers.DateField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True)
 
     def validate_amount(self, value):
@@ -188,6 +211,12 @@ class SavingsOperationSerializer(serializers.Serializer):
         if not reference:
             raise serializers.ValidationError("Reference is required.")
         return reference
+
+    def validate_transaction_date(self, value):
+        transaction_date = value or timezone.localdate()
+        if transaction_date > timezone.localdate():
+            raise serializers.ValidationError("Transaction date cannot be in the future.")
+        return transaction_date
 
     def validate_notes(self, value):
         return value.strip()
