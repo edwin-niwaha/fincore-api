@@ -68,7 +68,7 @@ class SelfServiceNotificationSerializer(serializers.ModelSerializer):
 
 
 class SelfServiceSavingsStatementEntrySerializer(serializers.ModelSerializer):
-    date = serializers.DateTimeField(source="created_at", read_only=True)
+    date = serializers.DateField(source="transaction_date", read_only=True)
     transaction_type = serializers.CharField(source="type", read_only=True)
     transaction_type_label = serializers.CharField(source="get_type_display", read_only=True)
     balance = serializers.DecimalField(

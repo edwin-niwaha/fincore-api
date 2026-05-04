@@ -4,11 +4,21 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from apps.accounting.models import JournalEntry, LedgerAccount
 from apps.audit.models import AuditLog
 from apps.clients.models import Client
 from apps.institutions.models import Branch, Institution
-from apps.loans.models import LoanApplication, LoanApplicationAction, LoanProduct, LoanRepayment, RepaymentSchedule
+from apps.loans.models import (
+    LoanApplication,
+    LoanApplicationAction,
+    LoanAppraisal,
+    LoanProduct,
+    LoanRepayment,
+    RepaymentSchedule,
+)
 from apps.notifications.models import Notification
+from apps.savings.models import SavingsAccount
+from apps.shares.models import ShareAccount, ShareProduct
 from apps.transactions.models import Transaction
 
 
@@ -43,6 +53,23 @@ def create_client(*, institution, branch, user=None, **overrides):
     }
     payload.update(overrides)
     return Client.objects.create(**payload)
+
+
+def create_ledger_account(
+    *,
+    institution,
+    code,
+    name,
+    account_type,
+    system_code="",
+):
+    return LedgerAccount.objects.create(
+        institution=institution,
+        code=code,
+        name=name,
+        type=account_type,
+        system_code=system_code,
+    )
 
 
 @pytest.mark.django_db
@@ -543,3 +570,326 @@ def test_invalid_loan_actions_and_permissions_are_enforced_for_client_officer_an
         format="json",
     )
     assert blocked_client_approve.status_code == 403
+
+
+@pytest.mark.django_db
+def test_loan_product_configuration_eligibility_appraisal_and_account_mapping_work():
+    institution = Institution.objects.create(name="Configured SACCO", code="configured")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    officer = create_user(
+        email="officer@configured.test",
+        username="configured-officer",
+        role="loan_officer",
+        institution=institution,
+        branch=branch,
+    )
+    manager = create_user(
+        email="manager@configured.test",
+        username="configured-manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
+    teller = create_user(
+        email="teller@configured.test",
+        username="configured-teller",
+        role="teller",
+        institution=institution,
+        branch=branch,
+    )
+    client_user = create_user(
+        email="client@configured.test",
+        username="configured-client",
+        role="client",
+        institution=institution,
+        branch=branch,
+    )
+    client = create_client(institution=institution, branch=branch, user=client_user)
+
+    receivable_account = create_ledger_account(
+        institution=institution,
+        code="1310",
+        name="Configured Loans Receivable",
+        account_type=LedgerAccount.AccountType.ASSET,
+    )
+    funding_account = create_ledger_account(
+        institution=institution,
+        code="1010",
+        name="Configured Cash",
+        account_type=LedgerAccount.AccountType.ASSET,
+    )
+    interest_income_account = create_ledger_account(
+        institution=institution,
+        code="4010",
+        name="Configured Interest Income",
+        account_type=LedgerAccount.AccountType.INCOME,
+    )
+
+    officer_api = APIClient()
+    officer_api.force_authenticate(user=officer)
+    manager_api = APIClient()
+    manager_api.force_authenticate(user=manager)
+
+    product_response = manager_api.post(
+        "/api/v1/loans/products/",
+        {
+            "institution": str(institution.id),
+            "name": "Configured Business Loan",
+            "code": "configured-business",
+            "description": "Used for configured eligibility and GL mapping tests.",
+            "min_amount": "500.00",
+            "max_amount": "10000.00",
+            "annual_interest_rate": "18.00",
+            "interest_method": "interest_only",
+            "repayment_frequency": "monthly",
+            "min_term_months": 3,
+            "max_term_months": 12,
+            "default_term_months": 6,
+            "grace_period_days": 10,
+            "penalty_rate": "3.00",
+            "penalty_flat_amount": "1000.00",
+            "penalty_grace_days": 5,
+            "minimum_savings_balance": "500.00",
+            "minimum_share_capital": "1000.00",
+            "max_outstanding_loans": 1,
+            "max_amount_to_savings_ratio": "3.00",
+            "max_amount_to_share_ratio": "5.00",
+            "debt_to_income_limit": "55.00",
+            "receivable_account": str(receivable_account.id),
+            "funding_account": str(funding_account.id),
+            "interest_income_account": str(interest_income_account.id),
+            "is_active": True,
+        },
+        format="json",
+    )
+    assert product_response.status_code == 201
+    product_id = product_response.data["id"]
+    assert product_response.data["interest_method"] == "interest_only"
+    assert product_response.data["grace_period_days"] == 10
+    assert product_response.data["receivable_account_name"] == receivable_account.name
+
+    eligibility_response = officer_api.post(
+        "/api/v1/loans/applications/eligibility-check/",
+        {
+            "client": str(client.id),
+            "product": product_id,
+            "amount": "2000.00",
+            "term_months": 6,
+            "monthly_income": "1000.00",
+            "monthly_expenses": "300.00",
+            "existing_debt_payments": "100.00",
+        },
+        format="json",
+    )
+    assert eligibility_response.status_code == 200
+    assert eligibility_response.data["eligible"] is False
+    failed_codes = {
+        check["code"]
+        for check in eligibility_response.data["checks"]
+        if not check["passed"]
+    }
+    assert "minimum_savings_balance" in failed_codes
+    assert "minimum_share_capital" in failed_codes
+
+    draft_response = officer_api.post(
+        "/api/v1/loans/applications/",
+        {
+            "client": str(client.id),
+            "product": product_id,
+            "amount": "2000.00",
+            "term_months": 6,
+            "purpose": "Configured workflow",
+            "repayment_source": "business",
+            "submit": False,
+        },
+        format="json",
+    )
+    assert draft_response.status_code == 201
+    loan_id = draft_response.data["id"]
+    assert draft_response.data["status"] == "draft"
+
+    blocked_submit = officer_api.post(
+        f"/api/v1/loans/applications/{loan_id}/submit/",
+        format="json",
+    )
+    assert blocked_submit.status_code == 400
+    assert "eligibility" in blocked_submit.data["errors"]
+
+    SavingsAccount.objects.create(client=client, balance=Decimal("700.00"))
+    share_product = ShareProduct.objects.create(
+        institution=institution,
+        name="Share Capital",
+        code="share-capital",
+        nominal_price=Decimal("100.00"),
+        minimum_shares=1,
+    )
+    ShareAccount.objects.create(
+        client=client,
+        product=share_product,
+        shares=20,
+        total_value=Decimal("2000.00"),
+    )
+
+    submitted_response = officer_api.post(
+        f"/api/v1/loans/applications/{loan_id}/submit/",
+        format="json",
+    )
+    assert submitted_response.status_code == 200
+    assert submitted_response.data["status"] == "submitted"
+    assert submitted_response.data["repayment_source"] == "business"
+
+    review_response = officer_api.post(
+        f"/api/v1/loans/applications/{loan_id}/start-review/",
+        {"comment": "Initial review started."},
+        format="json",
+    )
+    assert review_response.status_code == 200
+    assert review_response.data["status"] == "under_review"
+
+    appraisal_response = officer_api.post(
+        f"/api/v1/loans/applications/{loan_id}/appraise/",
+        {
+            "recommendation": "approve",
+            "monthly_income": "5000.00",
+            "monthly_expenses": "1000.00",
+            "existing_debt_payments": "100.00",
+            "risk_score": 22,
+            "collateral_notes": "Household assets reviewed.",
+            "guarantor_notes": "Guarantor review deferred to next slice.",
+            "credit_comments": "Good savings behavior.",
+            "notes": "Affordable under current business cash flow.",
+        },
+        format="json",
+    )
+    assert appraisal_response.status_code == 200
+    assert appraisal_response.data["status"] == "appraised"
+    assert appraisal_response.data["appraisals"][0]["recommendation"] == "approve"
+    assert appraisal_response.data["eligibility_snapshot"]["eligible"] is True
+
+    approve_response = manager_api.post(
+        f"/api/v1/loans/applications/{loan_id}/approve/",
+        {"comment": "Approved after appraisal."},
+        format="json",
+    )
+    assert approve_response.status_code == 200
+    assert approve_response.data["status"] == "approved"
+
+    teller_api = APIClient()
+    teller_api.force_authenticate(user=teller)
+    disburse_response = teller_api.post(
+        f"/api/v1/loans/applications/{loan_id}/disburse/",
+        {"reference": "CFG-DISB-1", "disbursement_method": "cash"},
+        format="json",
+    )
+    assert disburse_response.status_code == 200
+    assert disburse_response.data["status"] == "disbursed"
+
+    schedule_rows = list(
+        RepaymentSchedule.objects.filter(loan_id=loan_id).order_by("due_date", "created_at")
+    )
+    assert len(schedule_rows) == 6
+    assert schedule_rows[0].principal_due == Decimal("0.00")
+    assert schedule_rows[-1].principal_due == Decimal("2000.00")
+    assert schedule_rows[0].interest_due > Decimal("0.00")
+
+    disbursement_entry = (
+        JournalEntry.objects.filter(source=JournalEntry.Source.LOAN_DISBURSEMENT)
+        .order_by("-created_at")
+        .first()
+    )
+    assert disbursement_entry is not None
+    disbursement_accounts = set(
+        disbursement_entry.lines.values_list("account__code", flat=True)
+    )
+    assert disbursement_accounts == {receivable_account.code, funding_account.code}
+
+    repayment_response = teller_api.post(
+        f"/api/v1/loans/applications/{loan_id}/repay/",
+        {"amount": "230.00", "reference": "CFG-REP-1", "payment_method": "cash"},
+        format="json",
+    )
+    assert repayment_response.status_code == 201
+    assert repayment_response.data["interest_component"] == "180.00"
+    assert repayment_response.data["principal_component"] == "50.00"
+
+    repayment_entry = (
+        JournalEntry.objects.filter(source=JournalEntry.Source.LOAN_REPAYMENT)
+        .order_by("-created_at")
+        .first()
+    )
+    assert repayment_entry is not None
+    repayment_accounts = set(repayment_entry.lines.values_list("account__code", flat=True))
+    assert repayment_accounts == {
+        funding_account.code,
+        receivable_account.code,
+        interest_income_account.code,
+    }
+
+    loan_detail = officer_api.get(f"/api/v1/loans/applications/{loan_id}/")
+    assert loan_detail.status_code == 200
+    assert loan_detail.data["appraised_at"] is not None
+    assert len(loan_detail.data["appraisals"]) == 1
+    assert loan_detail.data["appraisals"][0]["risk_score"] == 22
+    assert loan_detail.data["appraisals"][0]["eligibility_passed"] is True
+
+
+@pytest.mark.django_db
+def test_loan_withdrawal_action_is_available_before_approval():
+    institution = Institution.objects.create(name="Withdraw SACCO", code="withdraw-sac")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    client_user = create_user(
+        email="client@withdraw.test",
+        username="withdraw-client",
+        role="client",
+        institution=institution,
+        branch=branch,
+    )
+    client = create_client(institution=institution, branch=branch, user=client_user)
+    product = LoanProduct.objects.create(
+        institution=institution,
+        name="Withdraw Product",
+        code="withdraw-product",
+        min_amount=Decimal("100.00"),
+        max_amount=Decimal("2000.00"),
+        annual_interest_rate=Decimal("12.00"),
+        interest_method="flat",
+        repayment_frequency="monthly",
+        min_term_months=1,
+        max_term_months=12,
+    )
+
+    SavingsAccount.objects.create(client=client, balance=Decimal("1000.00"))
+
+    client_api = APIClient()
+    client_api.force_authenticate(user=client_user)
+    created = client_api.post(
+        "/api/v1/loans/applications/",
+        {
+            "product": str(product.id),
+            "amount": "500.00",
+            "term_months": 6,
+            "purpose": "Need flexibility",
+            "repayment_source": "salary",
+            "submit": True,
+        },
+        format="json",
+    )
+    assert created.status_code == 201
+    loan_id = created.data["id"]
+
+    withdrawn = client_api.post(
+        f"/api/v1/loans/applications/{loan_id}/withdraw/",
+        {"reason": "Changed plans"},
+        format="json",
+    )
+    assert withdrawn.status_code == 200
+    assert withdrawn.data["status"] == "withdrawn"
+    assert withdrawn.data["withdrawal_reason"] == "Changed plans"
+
+    loan = LoanApplication.objects.get(pk=loan_id)
+    assert loan.status == LoanApplication.Status.WITHDRAWN
+    assert LoanApplicationAction.objects.filter(
+        application=loan,
+        action=LoanApplicationAction.Action.WITHDRAW,
+    ).count() == 1
+    assert LoanAppraisal.objects.filter(application=loan).count() == 0

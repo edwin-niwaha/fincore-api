@@ -5,9 +5,17 @@ from .models import SavingsAccount, SavingsAccountSequence, SavingsPolicy, Savin
 
 @admin.register(SavingsPolicy)
 class SavingsPolicyAdmin(admin.ModelAdmin):
-    list_display = ("name", "minimum_balance", "withdrawal_charge", "is_active", "updated_at")
+    list_display = (
+        "institution",
+        "name",
+        "minimum_balance",
+        "withdrawal_charge",
+        "is_active",
+        "updated_at",
+    )
     list_editable = ("minimum_balance", "withdrawal_charge", "is_active")
-    search_fields = ("name",)
+    list_filter = ("institution", "is_active")
+    search_fields = ("name", "institution__name", "institution__code")
 
 
 @admin.register(SavingsAccount)

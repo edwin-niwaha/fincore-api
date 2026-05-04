@@ -17,6 +17,7 @@ Legacy `/api/schema/` and `/api/docs/` routes redirect to the canonical `/api/v1
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+python manage.py makemigrations
 python manage.py migrate
 python manage.py runserver
 ```

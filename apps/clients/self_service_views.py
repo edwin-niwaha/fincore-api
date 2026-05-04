@@ -137,7 +137,7 @@ class SelfServiceDashboardView(SelfServiceClientMixin, APIView):
                 "account__client__branch",
                 "account__client__institution",
             )
-            .order_by("-created_at")[:5]
+            .order_by("-transaction_date", "-created_at")[:5]
         )
 
         return response.Response(
@@ -191,7 +191,7 @@ class SelfServiceSavingsSummaryView(SelfServiceClientMixin, APIView):
         recent_transactions = (
             SavingsTransaction.objects.filter(account__client=client)
             .select_related("account", "performed_by")
-            .order_by("-created_at")[:5]
+            .order_by("-transaction_date", "-created_at")[:5]
         )
 
         return response.Response(
@@ -234,11 +234,11 @@ class SelfServiceSavingsStatementView(SelfServiceClientMixin, APIView):
             transactions = transactions.filter(account_id=account_id)
 
         if date_from:
-            transactions = transactions.filter(created_at__date__gte=date_from)
+            transactions = transactions.filter(transaction_date__gte=date_from)
         if date_to:
-            transactions = transactions.filter(created_at__date__lte=date_to)
+            transactions = transactions.filter(transaction_date__lte=date_to)
 
-        transactions = transactions.order_by("-created_at")
+        transactions = transactions.order_by("-transaction_date", "-created_at")
 
         return response.Response(
             {

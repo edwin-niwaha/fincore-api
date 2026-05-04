@@ -44,6 +44,11 @@ class SavingsPolicy(TimeStampedModel):
     withdrawal charge any time from Django Admin or through the policy endpoint.
     """
 
+    institution = models.ForeignKey(
+        "institutions.Institution",
+        on_delete=models.CASCADE,
+        related_name="savings_policies",
+    )
     name = models.CharField(max_length=80, default="Default savings policy", unique=True)
     minimum_balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
     withdrawal_charge = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal("0.00"))
@@ -61,17 +66,52 @@ class SavingsPolicy(TimeStampedModel):
                 condition=Q(withdrawal_charge__gte=0),
                 name="savings_policy_withdrawal_charge_non_negative",
             ),
+            models.UniqueConstraint(
+                fields=["institution"],
+                condition=Q(is_active=True),
+                name="savings_policy_one_active_per_institution",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["institution", "is_active"], name="sav_policy_inst_active_idx"),
         ]
 
     def __str__(self):
-        return self.name
+        return f"{self.institution.code.upper()} - {self.name}"
 
     @classmethod
-    def current(cls):
-        policy = cls.objects.filter(is_active=True).order_by("-updated_at", "-created_at").first()
+    def default_name_for_institution(cls, institution):
+        return f"{institution.code.upper()} default savings policy"
+
+    @classmethod
+    def current(cls, institution):
+        if institution is None:
+            raise ValueError("institution is required to resolve the current savings policy")
+
+        policy = (
+            cls.objects.filter(institution=institution, is_active=True)
+            .order_by("-updated_at", "-created_at")
+            .first()
+        )
         if policy:
             return policy
-        return cls.objects.create(name="Default savings policy", is_active=True)
+
+        policy = (
+            cls.objects.filter(institution=institution)
+            .order_by("-updated_at", "-created_at")
+            .first()
+        )
+        if policy:
+            if not policy.is_active:
+                policy.is_active = True
+                policy.save(update_fields=["is_active", "updated_at"])
+            return policy
+
+        return cls.objects.create(
+            institution=institution,
+            name=cls.default_name_for_institution(institution),
+            is_active=True,
+        )
 
 
 class SavingsAccount(TimeStampedModel):

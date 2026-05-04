@@ -10,7 +10,12 @@ from .models import LoanApplication, LoanProduct
 
 def loan_products_for_user(user):
     queryset = (
-        LoanProduct.objects.select_related("institution")
+        LoanProduct.objects.select_related(
+            "institution",
+            "receivable_account",
+            "funding_account",
+            "interest_income_account",
+        )
         .annotate(
             application_count=Count("loanapplication", distinct=True),
             total_requested_amount=Coalesce(
@@ -49,9 +54,11 @@ def loans_for_user(user):
             "client__branch",
             "created_by",
             "submitted_by",
+            "appraised_by",
             "recommended_by",
             "approved_by",
             "rejected_by",
+            "withdrawn_by",
             "disbursed_by",
         )
         .annotate(

@@ -25,6 +25,25 @@ class ShareProduct(TimeStampedModel):
     class Meta(TimeStampedModel.Meta):
         unique_together = ("institution", "code")
         indexes = [models.Index(fields=["institution", "status"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(nominal_price__gt=0),
+                name="share_product_nominal_price_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(minimum_shares__gte=1),
+                name="share_product_minimum_shares_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(maximum_shares__isnull=True) | Q(maximum_shares__gte=1),
+                name="share_product_maximum_shares_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(maximum_shares__isnull=True)
+                | Q(maximum_shares__gte=F("minimum_shares")),
+                name="share_product_maximum_gte_minimum",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} - {self.name}"
@@ -106,7 +125,14 @@ class ShareTransaction(TimeStampedModel):
 
     class Meta(TimeStampedModel.Meta):
         constraints = [
-            models.CheckConstraint(condition=Q(amount__gte=0), name="share_transaction_amount_non_negative"),
+            models.CheckConstraint(
+                condition=Q(amount__gt=0),
+                name="share_transaction_amount_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(balance_after__gte=0),
+                name="share_transaction_balance_after_non_negative",
+            ),
         ]
         indexes = [models.Index(fields=["account", "type", "created_at"])]
 

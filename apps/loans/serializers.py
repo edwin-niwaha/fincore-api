@@ -2,9 +2,12 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from apps.clients.models import Client, ClientStatusChoices
+
 from .models import (
     LoanApplication,
     LoanApplicationAction,
+    LoanAppraisal,
     LoanProduct,
     LoanRepayment,
     RepaymentSchedule,
@@ -18,6 +21,18 @@ class LoanProductSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source="institution.name", read_only=True)
     application_count = serializers.SerializerMethodField()
     total_requested_amount = serializers.SerializerMethodField()
+    receivable_account_name = serializers.CharField(
+        source="receivable_account.name",
+        read_only=True,
+    )
+    funding_account_name = serializers.CharField(
+        source="funding_account.name",
+        read_only=True,
+    )
+    interest_income_account_name = serializers.CharField(
+        source="interest_income_account.name",
+        read_only=True,
+    )
 
     class Meta:
         model = LoanProduct
@@ -27,6 +42,7 @@ class LoanProductSerializer(serializers.ModelSerializer):
             "institution_name",
             "name",
             "code",
+            "description",
             "min_amount",
             "max_amount",
             "annual_interest_rate",
@@ -35,9 +51,22 @@ class LoanProductSerializer(serializers.ModelSerializer):
             "min_term_months",
             "max_term_months",
             "default_term_months",
+            "grace_period_days",
             "penalty_rate",
             "penalty_flat_amount",
             "penalty_grace_days",
+            "minimum_savings_balance",
+            "minimum_share_capital",
+            "max_outstanding_loans",
+            "max_amount_to_savings_ratio",
+            "max_amount_to_share_ratio",
+            "debt_to_income_limit",
+            "receivable_account",
+            "receivable_account_name",
+            "funding_account",
+            "funding_account_name",
+            "interest_income_account",
+            "interest_income_account_name",
             "is_active",
             "application_count",
             "total_requested_amount",
@@ -47,11 +76,15 @@ class LoanProductSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id",
             "institution_name",
+            "receivable_account_name",
+            "funding_account_name",
+            "interest_income_account_name",
             "application_count",
             "total_requested_amount",
             "created_at",
             "updated_at",
         )
+        validators = []
 
     def get_application_count(self, obj):
         if hasattr(obj, "application_count"):
@@ -74,7 +107,29 @@ class LoanProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Code is required.")
         return code
 
+    def validate_description(self, value):
+        return value.strip()
+
+    def _validate_account_mapping(self, *, account, institution, field_name):
+        if account is None:
+            return
+
+        if institution is None:
+            raise serializers.ValidationError({"institution": ["Institution is required."]})
+
+        if account.institution_id != institution.id:
+            raise serializers.ValidationError(
+                {field_name: ["Selected ledger account must belong to the same institution."]}
+            )
+
+        if not account.is_active:
+            raise serializers.ValidationError(
+                {field_name: ["Selected ledger account must be active."]}
+            )
+
     def validate(self, attrs):
+        institution = attrs.get("institution", getattr(self.instance, "institution", None))
+        code = attrs.get("code", getattr(self.instance, "code", ""))
         min_amount = attrs.get("min_amount", getattr(self.instance, "min_amount", None))
         max_amount = attrs.get("max_amount", getattr(self.instance, "max_amount", None))
         annual_interest_rate = attrs.get(
@@ -93,6 +148,10 @@ class LoanProductSerializer(serializers.ModelSerializer):
             "default_term_months",
             getattr(self.instance, "default_term_months", None),
         )
+        grace_period_days = attrs.get(
+            "grace_period_days",
+            getattr(self.instance, "grace_period_days", 0),
+        )
         penalty_rate = attrs.get(
             "penalty_rate",
             getattr(self.instance, "penalty_rate", None),
@@ -104,6 +163,30 @@ class LoanProductSerializer(serializers.ModelSerializer):
         penalty_grace_days = attrs.get(
             "penalty_grace_days",
             getattr(self.instance, "penalty_grace_days", None),
+        )
+        minimum_savings_balance = attrs.get(
+            "minimum_savings_balance",
+            getattr(self.instance, "minimum_savings_balance", ZERO_DECIMAL),
+        )
+        minimum_share_capital = attrs.get(
+            "minimum_share_capital",
+            getattr(self.instance, "minimum_share_capital", ZERO_DECIMAL),
+        )
+        max_outstanding_loans = attrs.get(
+            "max_outstanding_loans",
+            getattr(self.instance, "max_outstanding_loans", None),
+        )
+        max_amount_to_savings_ratio = attrs.get(
+            "max_amount_to_savings_ratio",
+            getattr(self.instance, "max_amount_to_savings_ratio", None),
+        )
+        max_amount_to_share_ratio = attrs.get(
+            "max_amount_to_share_ratio",
+            getattr(self.instance, "max_amount_to_share_ratio", None),
+        )
+        debt_to_income_limit = attrs.get(
+            "debt_to_income_limit",
+            getattr(self.instance, "debt_to_income_limit", None),
         )
 
         if min_amount is not None and min_amount <= ZERO_DECIMAL:
@@ -147,6 +230,10 @@ class LoanProductSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"default_term_months": ["Default term cannot exceed the maximum term."]}
                 )
+        if grace_period_days is not None and grace_period_days < 0:
+            raise serializers.ValidationError(
+                {"grace_period_days": ["Grace period days cannot be negative."]}
+            )
         if penalty_rate is not None and penalty_rate < ZERO_DECIMAL:
             raise serializers.ValidationError(
                 {"penalty_rate": ["Penalty rate cannot be negative."]}
@@ -159,6 +246,63 @@ class LoanProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"penalty_grace_days": ["Penalty grace days cannot be negative."]}
             )
+        if minimum_savings_balance is not None and minimum_savings_balance < ZERO_DECIMAL:
+            raise serializers.ValidationError(
+                {"minimum_savings_balance": ["Minimum savings balance cannot be negative."]}
+            )
+        if minimum_share_capital is not None and minimum_share_capital < ZERO_DECIMAL:
+            raise serializers.ValidationError(
+                {"minimum_share_capital": ["Minimum share capital cannot be negative."]}
+            )
+        if max_outstanding_loans is not None and max_outstanding_loans <= 0:
+            raise serializers.ValidationError(
+                {"max_outstanding_loans": ["Maximum outstanding loans must be greater than zero."]}
+            )
+        if (
+            max_amount_to_savings_ratio is not None
+            and max_amount_to_savings_ratio <= ZERO_DECIMAL
+        ):
+            raise serializers.ValidationError(
+                {"max_amount_to_savings_ratio": ["Savings ratio must be greater than zero."]}
+            )
+        if max_amount_to_share_ratio is not None and max_amount_to_share_ratio <= ZERO_DECIMAL:
+            raise serializers.ValidationError(
+                {"max_amount_to_share_ratio": ["Share ratio must be greater than zero."]}
+            )
+        if debt_to_income_limit is not None and debt_to_income_limit <= ZERO_DECIMAL:
+            raise serializers.ValidationError(
+                {"debt_to_income_limit": ["Debt-to-income limit must be greater than zero."]}
+            )
+
+        if institution is None:
+            raise serializers.ValidationError({"institution": ["Institution is required."]})
+
+        product_qs = LoanProduct.objects.filter(institution=institution, code__iexact=code)
+        if self.instance:
+            product_qs = product_qs.exclude(pk=self.instance.pk)
+        if product_qs.exists():
+            raise serializers.ValidationError(
+                {"code": ["A loan product with this code already exists for that institution."]}
+            )
+
+        self._validate_account_mapping(
+            account=attrs.get("receivable_account", getattr(self.instance, "receivable_account", None)),
+            institution=institution,
+            field_name="receivable_account",
+        )
+        self._validate_account_mapping(
+            account=attrs.get("funding_account", getattr(self.instance, "funding_account", None)),
+            institution=institution,
+            field_name="funding_account",
+        )
+        self._validate_account_mapping(
+            account=attrs.get(
+                "interest_income_account",
+                getattr(self.instance, "interest_income_account", None),
+            ),
+            institution=institution,
+            field_name="interest_income_account",
+        )
 
         return attrs
 
@@ -231,6 +375,45 @@ class LoanRepaymentSerializer(serializers.ModelSerializer):
         )
 
 
+class LoanAppraisalSerializer(serializers.ModelSerializer):
+    performed_by_email = serializers.EmailField(source="performed_by.email", read_only=True)
+    recommendation_label = serializers.CharField(
+        source="get_recommendation_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = LoanAppraisal
+        fields = (
+            "id",
+            "application",
+            "performed_by",
+            "performed_by_email",
+            "recommendation",
+            "recommendation_label",
+            "recommended_amount",
+            "recommended_term_months",
+            "monthly_income",
+            "monthly_expenses",
+            "existing_debt_payments",
+            "affordability_amount",
+            "estimated_installment",
+            "risk_score",
+            "savings_balance_snapshot",
+            "share_capital_snapshot",
+            "outstanding_loans_snapshot",
+            "overdue_loans_snapshot",
+            "eligibility_passed",
+            "collateral_notes",
+            "guarantor_notes",
+            "credit_comments",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
 class LoanApplicationSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField()
     client_member_number = serializers.CharField(source="client.member_number", read_only=True)
@@ -252,12 +435,14 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
     )
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
     submitted_by_email = serializers.EmailField(source="submitted_by.email", read_only=True)
+    appraised_by_email = serializers.EmailField(source="appraised_by.email", read_only=True)
     recommended_by_email = serializers.EmailField(
         source="recommended_by.email",
         read_only=True,
     )
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True)
     rejected_by_email = serializers.EmailField(source="rejected_by.email", read_only=True)
+    withdrawn_by_email = serializers.EmailField(source="withdrawn_by.email", read_only=True)
     disbursed_by_email = serializers.EmailField(source="disbursed_by.email", read_only=True)
     repayment_count = serializers.SerializerMethodField()
     schedule_count = serializers.SerializerMethodField()
@@ -283,6 +468,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             "amount",
             "term_months",
             "purpose",
+            "repayment_source",
             "status",
             "created_by",
             "created_by_email",
@@ -290,6 +476,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             "submitted_by_email",
             "submitted_at",
             "reviewed_at",
+            "appraised_by",
+            "appraised_by_email",
+            "appraised_at",
             "recommended_by",
             "recommended_by_email",
             "recommended_at",
@@ -300,11 +489,16 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             "rejected_by_email",
             "rejected_at",
             "rejected_reason",
+            "withdrawn_by",
+            "withdrawn_by_email",
+            "withdrawn_at",
+            "withdrawal_reason",
             "disbursed_at",
             "disbursed_by",
             "disbursed_by_email",
             "disbursement_method",
             "disbursement_reference",
+            "eligibility_snapshot",
             "principal_balance",
             "interest_balance",
             "outstanding_balance",
@@ -336,6 +530,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             "submitted_by_email",
             "submitted_at",
             "reviewed_at",
+            "appraised_by",
+            "appraised_by_email",
+            "appraised_at",
             "recommended_by",
             "recommended_by_email",
             "recommended_at",
@@ -346,11 +543,16 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             "rejected_by_email",
             "rejected_at",
             "rejected_reason",
+            "withdrawn_by",
+            "withdrawn_by_email",
+            "withdrawn_at",
+            "withdrawal_reason",
             "disbursed_at",
             "disbursed_by",
             "disbursed_by_email",
             "disbursement_method",
             "disbursement_reference",
+            "eligibility_snapshot",
             "principal_balance",
             "interest_balance",
             "outstanding_balance",
@@ -388,6 +590,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
     def validate_purpose(self, value):
         return value.strip()
 
+    def validate_repayment_source(self, value):
+        return value.strip()
+
     def validate(self, attrs):
         request = self.context.get("request")
         product = attrs.get("product") or getattr(self.instance, "product", None)
@@ -410,6 +615,10 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
 
         if not client:
             raise serializers.ValidationError({"client": ["Client is required."]})
+        if client.status != ClientStatusChoices.ACTIVE:
+            raise serializers.ValidationError(
+                {"client": ["Only active clients can submit or save loan applications."]}
+            )
 
         if not product:
             raise serializers.ValidationError({"product": ["Loan product is required."]})
@@ -430,15 +639,18 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             if self.instance.status in {
                 LoanApplication.Status.APPROVED,
                 LoanApplication.Status.REJECTED,
+                LoanApplication.Status.WITHDRAWN,
                 LoanApplication.Status.DISBURSED,
                 LoanApplication.Status.CLOSED,
+                LoanApplication.Status.WRITTEN_OFF,
             } and restricted_fields:
                 raise serializers.ValidationError(
-                    "Approved, rejected, disbursed, or closed applications cannot be edited."
+                    "Approved, rejected, withdrawn, disbursed, closed, or written-off applications cannot be edited."
                 )
 
             if self.instance.status in {
                 LoanApplication.Status.UNDER_REVIEW,
+                LoanApplication.Status.APPRAISED,
                 LoanApplication.Status.RECOMMENDED,
             } and restricted_fields:
                 raise serializers.ValidationError(
@@ -475,12 +687,14 @@ class LoanApplicationDetailSerializer(LoanApplicationSerializer):
     schedule = serializers.SerializerMethodField()
     repayments = serializers.SerializerMethodField()
     action_history = serializers.SerializerMethodField()
+    appraisals = serializers.SerializerMethodField()
 
     class Meta(LoanApplicationSerializer.Meta):
         fields = LoanApplicationSerializer.Meta.fields + (
             "schedule",
             "repayments",
             "action_history",
+            "appraisals",
         )
         read_only_fields = fields
 
@@ -495,6 +709,10 @@ class LoanApplicationDetailSerializer(LoanApplicationSerializer):
     def get_action_history(self, obj):
         history = obj.action_history.select_related("acted_by").order_by("created_at", "id")
         return LoanApplicationActionSerializer(history, many=True).data
+
+    def get_appraisals(self, obj):
+        history = obj.appraisals.select_related("performed_by").order_by("-created_at", "-id")
+        return LoanAppraisalSerializer(history, many=True).data
 
 
 class LoanActionSerializer(serializers.Serializer):
@@ -515,6 +733,116 @@ class LoanActionSerializer(serializers.Serializer):
 
     def validate_disbursement_method(self, value):
         return value.strip()
+
+
+class LoanEligibilityCheckSerializer(serializers.Serializer):
+    client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all(), required=False)
+    product = serializers.PrimaryKeyRelatedField(queryset=LoanProduct.objects.all())
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    term_months = serializers.IntegerField(min_value=1)
+    monthly_income = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+    )
+    monthly_expenses = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+    )
+    existing_debt_payments = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+    )
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        client_id = attrs.get("client")
+
+        if request and request.user.is_authenticated and request.user.role == LoanService.CLIENT_ROLE:
+            if hasattr(request.user, "client_profile"):
+                attrs["client"] = request.user.client_profile
+            else:
+                raise serializers.ValidationError(
+                    {"client": ["Your user account is not linked to a client profile."]}
+                )
+        else:
+            if not client_id:
+                raise serializers.ValidationError({"client": ["Client is required."]})
+            attrs["client"] = client_id
+
+        return attrs
+
+
+class LoanAppraisalCreateSerializer(serializers.Serializer):
+    recommendation = serializers.ChoiceField(choices=LoanAppraisal.Recommendation.choices)
+    recommended_amount = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    recommended_term_months = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=1,
+    )
+    monthly_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    monthly_expenses = serializers.DecimalField(max_digits=14, decimal_places=2, default=ZERO_DECIMAL)
+    existing_debt_payments = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=ZERO_DECIMAL,
+    )
+    risk_score = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=100)
+    collateral_notes = serializers.CharField(required=False, allow_blank=True)
+    guarantor_notes = serializers.CharField(required=False, allow_blank=True)
+    credit_comments = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_recommended_amount(self, value):
+        if value is not None and value <= ZERO_DECIMAL:
+            raise serializers.ValidationError("Recommended amount must be greater than zero.")
+        return value
+
+    def validate_monthly_income(self, value):
+        if value < ZERO_DECIMAL:
+            raise serializers.ValidationError("Monthly income cannot be negative.")
+        return value
+
+    def validate_monthly_expenses(self, value):
+        if value < ZERO_DECIMAL:
+            raise serializers.ValidationError("Monthly expenses cannot be negative.")
+        return value
+
+    def validate_existing_debt_payments(self, value):
+        if value < ZERO_DECIMAL:
+            raise serializers.ValidationError("Existing debt payments cannot be negative.")
+        return value
+
+    def validate_collateral_notes(self, value):
+        return value.strip()
+
+    def validate_guarantor_notes(self, value):
+        return value.strip()
+
+    def validate_credit_comments(self, value):
+        return value.strip()
+
+    def validate_notes(self, value):
+        return value.strip()
+
+    def validate(self, attrs):
+        if (
+            attrs.get("recommendation") == LoanAppraisal.Recommendation.MODIFY
+            and attrs.get("recommended_amount") in (None, "")
+            and attrs.get("recommended_term_months") in (None, "")
+        ):
+            raise serializers.ValidationError(
+                "Modification appraisals must include a recommended amount or recommended term."
+            )
+        return attrs
 
 
 class LoanRepaymentCreateSerializer(serializers.Serializer):

@@ -5,7 +5,9 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.audit.services import AuditService
 from apps.clients.selectors import clients_for_user
-from apps.common.permissions import IsCashRole
+from apps.common.permissions import IsAdminRole, IsCashRole
+from apps.institutions.models import Institution
+from apps.users.models import CustomUser
 
 from .models import SavingsPolicy, SavingsTransaction
 from .selectors import savings_accounts_for_user
@@ -48,6 +50,31 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
         if self.action == "policy":
             return SavingsPolicySerializer
         return SavingsAccountSerializer
+
+    def _policy_institution(self, request):
+        institution = getattr(request.user, "institution", None)
+        if institution is not None:
+            return institution
+
+        client_profile = getattr(request.user, "client_profile", None)
+        if client_profile and client_profile.institution_id:
+            return client_profile.institution
+
+        if request.user.role == CustomUser.Role.SUPER_ADMIN:
+            institution_id = request.query_params.get("institution") or request.data.get("institution")
+            if not institution_id:
+                raise ValidationError(
+                    {"institution": ["Provide an institution id when managing a savings policy as super admin."]}
+                )
+
+            institution = Institution.objects.filter(pk=institution_id).first()
+            if institution is None:
+                raise ValidationError({"institution": ["Institution not found."]})
+            return institution
+
+        raise ValidationError(
+            {"institution": ["Institution context is required for the savings policy."]}
+        )
 
     def _validate_scope(self, serializer):
         client = serializer.validated_data.get("client", getattr(serializer.instance, "client", None))
@@ -98,12 +125,13 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
         if self.action in {"create", "update", "partial_update", "destroy", "deposit", "withdraw"}:
             return [IsCashRole()]
         if self.action == "policy" and self.request.method not in {"GET", "HEAD", "OPTIONS"}:
-            return [IsCashRole()]
+            return [IsAdminRole()]
         return super().get_permissions()
 
     @decorators.action(detail=False, methods=["get", "patch"])
     def policy(self, request):
-        policy = SavingsPolicy.current()
+        institution = self._policy_institution(request)
+        policy = SavingsPolicy.current(institution)
         if request.method == "PATCH":
             serializer = SavingsPolicySerializer(policy, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
@@ -113,6 +141,7 @@ class SavingsAccountViewSet(viewsets.ModelViewSet):
                 action="savings.policy.update",
                 target=str(policy.id),
                 metadata={
+                    "institution_id": str(policy.institution_id),
                     "minimum_balance": str(policy.minimum_balance),
                     "withdrawal_charge": str(policy.withdrawal_charge),
                     "is_active": policy.is_active,

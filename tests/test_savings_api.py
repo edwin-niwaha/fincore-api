@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from apps.audit.models import AuditLog
 from apps.clients.models import Client
 from apps.institutions.models import Branch, Institution
-from apps.savings.models import SavingsAccount, SavingsTransaction
+from apps.savings.models import SavingsAccount, SavingsPolicy, SavingsTransaction
 from apps.savings.services import SavingsService
 from apps.transactions.models import Transaction
 
@@ -248,6 +248,97 @@ def test_withdrawal_prevents_negative_balances_and_preserves_existing_balance():
 
 
 @pytest.mark.django_db
+def test_account_creation_requires_active_client_and_non_closed_status():
+    institution = Institution.objects.create(name="Validation SACCO", code="validation")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    teller = create_user(
+        email="teller@validation.test",
+        username="teller-validation",
+        role="teller",
+        institution=institution,
+        branch=branch,
+    )
+    inactive_client = create_client(
+        institution=institution,
+        branch=branch,
+        first_name="Inactive",
+        last_name="Client",
+        status="inactive",
+    )
+    active_client = create_client(
+        institution=institution,
+        branch=branch,
+        first_name="Active",
+        last_name="Client",
+    )
+
+    api = APIClient()
+    api.force_authenticate(user=teller)
+
+    inactive_response = api.post(
+        "/api/v1/savings/accounts/",
+        {"client": str(inactive_client.id), "status": "active"},
+        format="json",
+    )
+    assert inactive_response.status_code == 400
+    assert "Only active clients can open savings accounts." in inactive_response.data["errors"]["client"]
+
+    closed_response = api.post(
+        "/api/v1/savings/accounts/",
+        {"client": str(active_client.id), "status": "closed"},
+        format="json",
+    )
+    assert closed_response.status_code == 400
+    assert "Savings accounts cannot be created in a closed status." in closed_response.data["errors"]["status"]
+
+
+@pytest.mark.django_db
+def test_inactive_accounts_reject_cash_operations():
+    institution = Institution.objects.create(name="Dormant SACCO", code="dormant")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    teller = create_user(
+        email="teller@dormant.test",
+        username="teller-dormant",
+        role="teller",
+        institution=institution,
+        branch=branch,
+    )
+    client = create_client(institution=institution, branch=branch)
+    account = SavingsAccount.objects.create(
+        client=client,
+        status="inactive",
+        balance=Decimal("100.00"),
+    )
+
+    api = APIClient()
+    api.force_authenticate(user=teller)
+
+    deposit_response = api.post(
+        f"/api/v1/savings/accounts/{account.id}/deposit/",
+        {"amount": "25.00", "reference": "DEP-INACTIVE"},
+        format="json",
+    )
+    assert deposit_response.status_code == 400
+    assert "only active savings accounts can process transactions" in deposit_response.data[
+        "message"
+    ].lower()
+
+    withdrawal_response = api.post(
+        f"/api/v1/savings/accounts/{account.id}/withdraw/",
+        {"amount": "25.00", "reference": "WIT-INACTIVE"},
+        format="json",
+    )
+    assert withdrawal_response.status_code == 400
+    assert "only active savings accounts can process transactions" in withdrawal_response.data[
+        "message"
+    ].lower()
+
+    account.refresh_from_db()
+    assert account.balance == Decimal("100.00")
+    assert SavingsTransaction.objects.filter(account=account).count() == 0
+
+
+@pytest.mark.django_db
 def test_permissions_and_scope_limit_savings_access_and_cash_operations():
     institution = Institution.objects.create(name="Scope SACCO", code="scope")
     branch_a = Branch.objects.create(institution=institution, name="Main", code="main")
@@ -310,6 +401,101 @@ def test_permissions_and_scope_limit_savings_access_and_cash_operations():
         format="json",
     )
     assert blocked_client_deposit.status_code == 403
+
+
+@pytest.mark.django_db
+def test_savings_policy_updates_are_admin_only_and_institution_scoped():
+    institution_a = Institution.objects.create(name="Alpha Policy SACCO", code="alpha-policy")
+    institution_b = Institution.objects.create(name="Beta Policy SACCO", code="beta-policy")
+    branch_a = Branch.objects.create(institution=institution_a, name="Main", code="main")
+    branch_b = Branch.objects.create(institution=institution_b, name="Main", code="beta")
+    institution_admin_a = create_user(
+        email="admin@alpha-policy.test",
+        username="alpha-policy-admin",
+        role="institution_admin",
+        institution=institution_a,
+    )
+    teller_a = create_user(
+        email="teller@alpha-policy.test",
+        username="alpha-policy-teller",
+        role="teller",
+        institution=institution_a,
+        branch=branch_a,
+    )
+    teller_b = create_user(
+        email="teller@beta-policy.test",
+        username="beta-policy-teller",
+        role="teller",
+        institution=institution_b,
+        branch=branch_b,
+    )
+    client_a = create_client(institution=institution_a, branch=branch_a)
+    client_b = create_client(institution=institution_b, branch=branch_b)
+    account_a = SavingsAccount.objects.create(client=client_a)
+    account_b = SavingsAccount.objects.create(client=client_b)
+
+    admin_api = APIClient()
+    admin_api.force_authenticate(user=institution_admin_a)
+    teller_a_api = APIClient()
+    teller_a_api.force_authenticate(user=teller_a)
+    teller_b_api = APIClient()
+    teller_b_api.force_authenticate(user=teller_b)
+
+    default_policy_response = teller_a_api.get("/api/v1/savings/accounts/policy/")
+    assert default_policy_response.status_code == 200
+    assert default_policy_response.data["institution"] == str(institution_a.id)
+    assert default_policy_response.data["minimum_balance"] == "0.00"
+    assert default_policy_response.data["withdrawal_charge"] == "0.00"
+
+    blocked_policy_update = teller_a_api.patch(
+        "/api/v1/savings/accounts/policy/",
+        {"minimum_balance": "50.00", "withdrawal_charge": "10.00"},
+        format="json",
+    )
+    assert blocked_policy_update.status_code == 403
+
+    policy_update = admin_api.patch(
+        "/api/v1/savings/accounts/policy/",
+        {"minimum_balance": "50.00", "withdrawal_charge": "10.00"},
+        format="json",
+    )
+    assert policy_update.status_code == 200
+    assert policy_update.data["institution"] == str(institution_a.id)
+    assert policy_update.data["minimum_balance"] == "50.00"
+    assert policy_update.data["withdrawal_charge"] == "10.00"
+
+    institution_a_policy = SavingsPolicy.current(institution_a)
+    institution_b_policy = SavingsPolicy.current(institution_b)
+    assert institution_a_policy.minimum_balance == Decimal("50.00")
+    assert institution_a_policy.withdrawal_charge == Decimal("10.00")
+    assert institution_b_policy.minimum_balance == Decimal("0.00")
+    assert institution_b_policy.withdrawal_charge == Decimal("0.00")
+
+    teller_a_api.post(
+        f"/api/v1/savings/accounts/{account_a.id}/deposit/",
+        {"amount": "100.00", "reference": "POL-DEP-A"},
+        format="json",
+    )
+    teller_b_api.post(
+        f"/api/v1/savings/accounts/{account_b.id}/deposit/",
+        {"amount": "100.00", "reference": "POL-DEP-B"},
+        format="json",
+    )
+
+    blocked_withdrawal = teller_a_api.post(
+        f"/api/v1/savings/accounts/{account_a.id}/withdraw/",
+        {"amount": "45.00", "reference": "POL-WIT-A"},
+        format="json",
+    )
+    assert blocked_withdrawal.status_code == 400
+    assert "minimum balance of 50.00" in blocked_withdrawal.data["message"].lower()
+
+    successful_withdrawal = teller_b_api.post(
+        f"/api/v1/savings/accounts/{account_b.id}/withdraw/",
+        {"amount": "45.00", "reference": "POL-WIT-B"},
+        format="json",
+    )
+    assert successful_withdrawal.status_code == 201
 
 
 @pytest.mark.django_db

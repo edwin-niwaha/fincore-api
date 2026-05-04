@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -321,3 +322,140 @@ def test_trial_balance_endpoint_returns_balanced_totals_and_rows():
     rows = {row["code"]: row for row in response.data["rows"]}
     assert as_amount(rows["1000"]["total_debit"]) == Decimal("250.00")
     assert as_amount(rows["2000"]["total_credit"]) == Decimal("250.00")
+
+
+@pytest.mark.django_db
+def test_loan_report_endpoints_return_scoped_portfolio_disbursements_collections_and_arrears():
+    institution = Institution.objects.create(name="Loan Reports SACCO", code="loan-reports")
+    branch = Branch.objects.create(institution=institution, name="Main", code="main")
+    officer = create_user(
+        email="loanofficer@example.com",
+        username="loanofficer",
+        role="loan_officer",
+        institution=institution,
+        branch=branch,
+    )
+    manager = create_user(
+        email="loanmanager@example.com",
+        username="loanmanager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
+    teller = create_user(
+        email="loanteller@example.com",
+        username="loanteller",
+        role="teller",
+        institution=institution,
+        branch=branch,
+    )
+    client = create_client(institution=institution, branch=branch)
+    savings_account = SavingsAccount.objects.create(client=client)
+    SavingsService.deposit(
+        account=savings_account,
+        amount=Decimal("500.00"),
+        performed_by=teller,
+        reference="DEP-LR-1",
+    )
+
+    product = LoanProduct.objects.create(
+        institution=institution,
+        name="Portfolio Loan",
+        code="portfolio-loan",
+        min_amount=Decimal("100.00"),
+        max_amount=Decimal("5000.00"),
+        annual_interest_rate=Decimal("12.00"),
+        interest_method="flat",
+        repayment_frequency="monthly",
+        min_term_months=3,
+        max_term_months=24,
+    )
+    loan = LoanApplication.objects.create(
+        client=client,
+        product=product,
+        amount=Decimal("900.00"),
+        term_months=6,
+        purpose="Loan reporting",
+    )
+
+    LoanService.initialize_new_application(loan=loan, created_by=officer, submit=True)
+    LoanService.start_review(loan=loan, user=officer, comment="Review started")
+    LoanService.recommend(loan=loan, user=officer, comment="Recommend approval")
+    LoanService.approve(loan=loan, user=manager, comment="Approved")
+    LoanService.disburse(loan=loan, user=teller, reference="LR-DISB-1", disbursement_method="cash")
+    LoanService.repay(
+        loan=loan,
+        amount=Decimal("150.00"),
+        reference="LR-REP-1",
+        received_by=teller,
+        payment_method="cash",
+    )
+
+    first_schedule = loan.schedule.order_by("due_date", "created_at").first()
+    assert first_schedule is not None
+    first_schedule.due_date = timezone.localdate() - timedelta(days=14)
+    first_schedule.save(update_fields=["due_date"])
+
+    api = APIClient()
+    api.force_authenticate(user=officer)
+
+    portfolio_response = api.get(
+        (
+            "/api/v1/reports/loan-portfolio/"
+            f"?institution={institution.id}"
+            f"&branch={branch.id}"
+            f"&as_of={timezone.localdate().isoformat()}"
+            "&include_rows=1"
+        )
+    )
+    assert portfolio_response.status_code == 200
+    assert portfolio_response.data["loans"] == 1
+    assert portfolio_response.data["active"] == 1
+    assert portfolio_response.data["overdue_loans"] == 1
+    assert as_amount(portfolio_response.data["principal_outstanding"]) > Decimal("0.00")
+    assert len(portfolio_response.data["rows"]) == 1
+    assert portfolio_response.data["rows"][0]["status"] == "disbursed"
+    assert int(portfolio_response.data["rows"][0]["days_past_due"]) >= 14
+
+    disbursements_response = api.get(
+        (
+            "/api/v1/reports/loan-disbursements/"
+            f"?institution={institution.id}"
+            f"&branch={branch.id}"
+            f"&date_from={timezone.localdate().isoformat()}"
+            f"&date_to={timezone.localdate().isoformat()}"
+        )
+    )
+    assert disbursements_response.status_code == 200
+    assert disbursements_response.data["totals"]["count"] == 1
+    assert disbursements_response.data["rows"][0]["disbursement_reference"] == "LR-DISB-1"
+    assert as_amount(disbursements_response.data["totals"]["amount"]) == Decimal("900.00")
+
+    collections_response = api.get(
+        (
+            "/api/v1/reports/loan-collections/"
+            f"?institution={institution.id}"
+            f"&branch={branch.id}"
+            f"&date_from={timezone.localdate().isoformat()}"
+            f"&date_to={timezone.localdate().isoformat()}"
+        )
+    )
+    assert collections_response.status_code == 200
+    assert collections_response.data["totals"]["count"] == 1
+    assert collections_response.data["rows"][0]["reference"] == "LR-REP-1"
+    assert as_amount(collections_response.data["totals"]["amount"]) == Decimal("150.00")
+
+    arrears_response = api.get(
+        (
+            "/api/v1/reports/loan-arrears-aging/"
+            f"?institution={institution.id}"
+            f"&branch={branch.id}"
+            f"&as_of={timezone.localdate().isoformat()}"
+        )
+    )
+    assert arrears_response.status_code == 200
+    assert arrears_response.data["totals"]["loans_in_arrears"] == 1
+    assert len(arrears_response.data["rows"]) == 1
+    assert arrears_response.data["rows"][0]["loan_id"] == str(loan.id)
+    assert int(arrears_response.data["rows"][0]["days_past_due"]) >= 14
+    assert as_amount(arrears_response.data["totals"]["overdue_balance"]) > Decimal("0.00")

@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.clients.models import ClientStatusChoices
 from apps.common.models import StatusChoices
 
 from .models import SavingsAccount, SavingsPolicy, SavingsTransaction
@@ -11,10 +12,15 @@ ZERO_DECIMAL = Decimal("0.00")
 
 
 class SavingsPolicySerializer(serializers.ModelSerializer):
+    institution = serializers.UUIDField(source="institution_id", read_only=True)
+    institution_name = serializers.CharField(source="institution.name", read_only=True)
+
     class Meta:
         model = SavingsPolicy
         fields = (
             "id",
+            "institution",
+            "institution_name",
             "name",
             "minimum_balance",
             "withdrawal_charge",
@@ -22,7 +28,15 @@ class SavingsPolicySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "institution",
+            "institution_name",
+            "name",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
 
     def validate_minimum_balance(self, value):
         if value < ZERO_DECIMAL:
@@ -160,6 +174,19 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
 
         if not client:
             raise serializers.ValidationError({"client": ["Client is required."]})
+
+        client_changed = self.instance is None or (
+            "client" in attrs and self.instance.client_id != client.id
+        )
+        if client_changed and client.status != ClientStatusChoices.ACTIVE:
+            raise serializers.ValidationError(
+                {"client": ["Only active clients can open savings accounts."]}
+            )
+
+        if self.instance is None and status == StatusChoices.CLOSED:
+            raise serializers.ValidationError(
+                {"status": ["Savings accounts cannot be created in a closed status."]}
+            )
 
         if (
             self.instance

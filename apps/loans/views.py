@@ -12,6 +12,8 @@ from .serializers import (
     LoanActionSerializer,
     LoanApplicationDetailSerializer,
     LoanApplicationSerializer,
+    LoanAppraisalCreateSerializer,
+    LoanEligibilityCheckSerializer,
     LoanProductSerializer,
     LoanRepaymentCreateSerializer,
     LoanRepaymentSerializer,
@@ -32,6 +34,7 @@ LOAN_CREATE_ROLES = {
     CustomUser.Role.LOAN_OFFICER,
 }
 LOAN_REVIEW_ROLES = LoanService.LOAN_OFFICER_ROLES
+LOAN_APPRAISAL_ROLES = LoanService.LOAN_OFFICER_ROLES
 LOAN_APPROVER_ROLES = LoanService.APPROVER_ROLES
 LOAN_REJECTION_ROLES = LoanService.LOAN_OFFICER_ROLES | LoanService.APPROVER_ROLES
 CASH_COLLECTION_ROLES = {
@@ -50,9 +53,9 @@ def _has_role(user, roles):
 class LoanProductViewSet(viewsets.ModelViewSet):
     serializer_class = LoanProductSerializer
     permission_classes = [IsAuthenticated]
-    filterset_fields = ["institution", "is_active"]
+    filterset_fields = ["institution", "is_active", "interest_method", "repayment_frequency"]
     search_fields = ["name", "code"]
-    ordering_fields = ["name", "code", "created_at", "updated_at"]
+    ordering_fields = ["name", "code", "created_at", "updated_at", "annual_interest_rate"]
     ordering = ["institution__name", "code", "name"]
 
     def get_queryset(self):
@@ -115,7 +118,14 @@ class LoanProductViewSet(viewsets.ModelViewSet):
 
 class LoanApplicationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
-    filterset_fields = ["client", "product", "status", "client__branch", "client__institution"]
+    filterset_fields = [
+        "client",
+        "product",
+        "status",
+        "repayment_source",
+        "client__branch",
+        "client__institution",
+    ]
     search_fields = [
         "client__member_number",
         "client__first_name",
@@ -135,6 +145,13 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         if self.action == "retrieve":
             return LoanApplicationDetailSerializer
         return LoanApplicationSerializer
+
+    def _detail_response(self, loan, *, status_code=status.HTTP_200_OK):
+        serializer = LoanApplicationDetailSerializer(
+            loan,
+            context=self.get_serializer_context(),
+        )
+        return response.Response(serializer.data, status=status_code)
 
     def _validate_scope(self, serializer):
         client = serializer.validated_data.get(
@@ -160,6 +177,18 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         if not _has_role(self.request.user, roles):
             raise PermissionDenied(message)
 
+    def _require_edit_role(self, instance=None):
+        user = self.request.user
+        if user.role == CustomUser.Role.CLIENT:
+            if instance and instance.client.user_id != user.id:
+                raise PermissionDenied("Client users can only modify their own loan applications.")
+            return
+
+        self._require_roles(
+            LOAN_CREATE_ROLES,
+            "You do not have permission to modify loan applications.",
+        )
+
     def perform_create(self, serializer):
         user = self.request.user
         if user.role != CustomUser.Role.CLIENT:
@@ -181,6 +210,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         serializer.instance = loan
 
     def perform_update(self, serializer):
+        self._require_edit_role(instance=serializer.instance)
         self._validate_scope(serializer)
         loan = serializer.save()
         AuditService.log(
@@ -191,6 +221,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
+        self._require_edit_role(instance=instance)
         if instance.status != instance.Status.DRAFT:
             raise ValidationError("Only draft loan applications can be deleted.")
 
@@ -211,7 +242,34 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
                 "You do not have permission to submit loan applications.",
             )
         loan = LoanService.submit(loan=loan, user=request.user)
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
+
+    @decorators.action(detail=False, methods=["post"], url_path="eligibility-check")
+    def eligibility_check(self, request):
+        serializer = LoanEligibilityCheckSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        client = serializer.validated_data["client"]
+        product = serializer.validated_data["product"]
+
+        if not clients_for_user(request.user).filter(pk=client.pk).exists():
+            raise PermissionDenied("You cannot assess eligibility outside your client scope.")
+
+        if not loan_products_for_user(request.user).filter(pk=product.pk).exists():
+            raise PermissionDenied("You cannot assess eligibility against a loan product outside your scope.")
+
+        snapshot = LoanService.evaluate_eligibility(
+            client=client,
+            product=product,
+            amount=serializer.validated_data["amount"],
+            term_months=serializer.validated_data["term_months"],
+            monthly_income=serializer.validated_data.get("monthly_income"),
+            monthly_expenses=serializer.validated_data.get("monthly_expenses"),
+            existing_debt_payments=serializer.validated_data.get("existing_debt_payments"),
+        )
+        return response.Response(snapshot)
 
     @decorators.action(detail=True, methods=["post"], url_path="start-review")
     def start_review(self, request, pk=None):
@@ -226,7 +284,22 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             user=request.user,
             comment=serializer.validated_data.get("comment", ""),
         )
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
+
+    @decorators.action(detail=True, methods=["post"])
+    def appraise(self, request, pk=None):
+        self._require_roles(
+            LOAN_APPRAISAL_ROLES,
+            "You do not have permission to appraise loan applications.",
+        )
+        serializer = LoanAppraisalCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        loan = LoanService.appraise(
+            loan=self.get_object(),
+            user=request.user,
+            **serializer.validated_data,
+        )
+        return self._detail_response(loan)
 
     @decorators.action(detail=True, methods=["post"])
     def recommend(self, request, pk=None):
@@ -241,7 +314,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             user=request.user,
             comment=serializer.validated_data.get("comment", ""),
         )
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
 
     @decorators.action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
@@ -257,7 +330,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             comment=serializer.validated_data.get("comment", ""),
             override=serializer.validated_data.get("override", False),
         )
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
 
     @decorators.action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
@@ -273,7 +346,24 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             reason=serializer.validated_data.get("reason", ""),
             comment=serializer.validated_data.get("comment", ""),
         )
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
+
+    @decorators.action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        if request.user.role != CustomUser.Role.CLIENT:
+            self._require_roles(
+                LOAN_CREATE_ROLES | LOAN_REVIEW_ROLES | LOAN_APPROVER_ROLES,
+                "You do not have permission to withdraw loan applications.",
+            )
+        serializer = LoanActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        loan = LoanService.withdraw(
+            loan=self.get_object(),
+            user=request.user,
+            reason=serializer.validated_data.get("reason", "")
+            or serializer.validated_data.get("comment", ""),
+        )
+        return self._detail_response(loan)
 
     @decorators.action(detail=True, methods=["post"])
     def disburse(self, request, pk=None):
@@ -289,7 +379,7 @@ class LoanApplicationViewSet(viewsets.ModelViewSet):
             reference=serializer.validated_data.get("reference") or f"DISB-{pk}",
             disbursement_method=serializer.validated_data.get("disbursement_method", ""),
         )
-        return response.Response(self.get_serializer(loan).data)
+        return self._detail_response(loan)
 
     @decorators.action(detail=True, methods=["post"])
     def repay(self, request, pk=None):

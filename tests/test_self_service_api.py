@@ -128,6 +128,7 @@ def build_self_service_fixture():
         amount=Decimal("200.00"),
         performed_by=teller,
         reference="SELF-SAV-DEP-1",
+        transaction_date=timezone.localdate() - timedelta(days=14),
         notes="Initial deposit",
     )
     SavingsService.withdraw(
@@ -143,9 +144,6 @@ def build_self_service_fixture():
         performed_by=teller,
         reference="SELF-SAV-DEP-OTHER",
         notes="Other client deposit",
-    )
-    SavingsTransaction.objects.filter(reference="SELF-SAV-DEP-1").update(
-        created_at=timezone.now() - timedelta(days=14)
     )
 
     active_product = LoanProduct.objects.create(

@@ -151,7 +151,7 @@ class SavingsService:
         reference = cls._normalize_reference(reference)
         transaction_date = cls._normalize_transaction_date(transaction_date)
         notes = str(notes).strip()
-        policy = SavingsPolicy.current()
+        policy = SavingsPolicy.current(account.client.institution)
         withdrawal_charge = Decimal(policy.withdrawal_charge or ZERO_DECIMAL)
         minimum_balance = Decimal(policy.minimum_balance or ZERO_DECIMAL)
         total_debit = amount + withdrawal_charge

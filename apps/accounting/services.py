@@ -288,6 +288,24 @@ class AccountingPostingService:
     def _journal_reference(prefix, reference):
         return f"{prefix}-{reference}".strip()
 
+    @staticmethod
+    def _resolve_loan_product_account(*, loan, field_name, fallback_account):
+        account = getattr(loan.product, field_name, None)
+        if account is None:
+            return fallback_account
+
+        if account.institution_id != loan.client.institution_id:
+            raise ValidationError(
+                f"Configured {field_name.replace('_', ' ')} must belong to the loan institution."
+            )
+
+        if not account.is_active:
+            raise ValidationError(
+                f"Configured {field_name.replace('_', ' ')} is inactive."
+            )
+
+        return account
+
     @classmethod
     def post_savings_deposit(cls, *, account, amount, reference, posted_by=None):
         system_accounts = ChartOfAccountsService.get_system_accounts(account.client.institution)
@@ -345,6 +363,16 @@ class AccountingPostingService:
     @classmethod
     def post_loan_disbursement(cls, *, loan, reference, posted_by=None):
         system_accounts = ChartOfAccountsService.get_system_accounts(loan.client.institution)
+        receivable_account = cls._resolve_loan_product_account(
+            loan=loan,
+            field_name="receivable_account",
+            fallback_account=system_accounts[LedgerAccount.SystemCode.LOANS_RECEIVABLE],
+        )
+        funding_account = cls._resolve_loan_product_account(
+            loan=loan,
+            field_name="funding_account",
+            fallback_account=system_accounts[LedgerAccount.SystemCode.CASH_ON_HAND],
+        )
         return JournalService.create_entry(
             institution=loan.client.institution,
             branch=loan.client.branch,
@@ -357,12 +385,12 @@ class AccountingPostingService:
             posted_by=posted_by,
             lines=[
                 {
-                    "account": system_accounts[LedgerAccount.SystemCode.LOANS_RECEIVABLE],
+                    "account": receivable_account,
                     "debit": loan.amount,
                     "credit": ZERO_DECIMAL,
                 },
                 {
-                    "account": system_accounts[LedgerAccount.SystemCode.CASH_ON_HAND],
+                    "account": funding_account,
                     "debit": ZERO_DECIMAL,
                     "credit": loan.amount,
                 },
@@ -381,9 +409,24 @@ class AccountingPostingService:
         posted_by=None,
     ):
         system_accounts = ChartOfAccountsService.get_system_accounts(loan.client.institution)
+        funding_account = cls._resolve_loan_product_account(
+            loan=loan,
+            field_name="funding_account",
+            fallback_account=system_accounts[LedgerAccount.SystemCode.CASH_ON_HAND],
+        )
+        receivable_account = cls._resolve_loan_product_account(
+            loan=loan,
+            field_name="receivable_account",
+            fallback_account=system_accounts[LedgerAccount.SystemCode.LOANS_RECEIVABLE],
+        )
+        interest_income_account = cls._resolve_loan_product_account(
+            loan=loan,
+            field_name="interest_income_account",
+            fallback_account=system_accounts[LedgerAccount.SystemCode.INTEREST_INCOME],
+        )
         lines = [
             {
-                "account": system_accounts[LedgerAccount.SystemCode.CASH_ON_HAND],
+                "account": funding_account,
                 "debit": amount,
                 "credit": ZERO_DECIMAL,
             }
@@ -392,7 +435,7 @@ class AccountingPostingService:
         if principal_component > 0:
             lines.append(
                 {
-                    "account": system_accounts[LedgerAccount.SystemCode.LOANS_RECEIVABLE],
+                    "account": receivable_account,
                     "debit": ZERO_DECIMAL,
                     "credit": principal_component,
                 }
@@ -401,7 +444,7 @@ class AccountingPostingService:
         if interest_component > 0:
             lines.append(
                 {
-                    "account": system_accounts[LedgerAccount.SystemCode.INTEREST_INCOME],
+                    "account": interest_income_account,
                     "debit": ZERO_DECIMAL,
                     "credit": interest_component,
                 }
