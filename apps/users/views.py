@@ -13,6 +13,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.audit.services import AuditService
+
 from .access import is_user_manager, scope_user_queryset
 from .models import EmailOTP
 from .serializers import (
@@ -75,6 +77,23 @@ class UserViewSet(viewsets.ModelViewSet):
         queryset = User.objects.select_related("institution", "branch").order_by("-created_at")
         return scope_user_queryset(queryset, self.request.user)
 
+    def perform_create(self, serializer):
+        target_user = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="users.account.create",
+            target=str(target_user.id),
+            institution=target_user.institution,
+            branch=target_user.branch,
+            metadata={
+                "email": target_user.email,
+                "username": target_user.username,
+                "role": target_user.role,
+                "is_active": target_user.is_active,
+            },
+        )
+
     def perform_update(self, serializer):
         target_user = serializer.instance
 
@@ -91,13 +110,44 @@ class UserViewSet(viewsets.ModelViewSet):
                     }
                 )
 
-        serializer.save()
+        target_user = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="users.account.update",
+            target=str(target_user.id),
+            institution=target_user.institution,
+            branch=target_user.branch,
+            metadata={
+                "email": target_user.email,
+                "username": target_user.username,
+                "role": target_user.role,
+                "is_active": target_user.is_active,
+            },
+        )
 
     def perform_destroy(self, instance):
         if instance == self.request.user:
             raise ValidationError({"detail": "You cannot delete your own account."})
 
+        target_id = str(instance.id)
+        email = instance.email
+        role = instance.role
+        institution = instance.institution
+        branch = instance.branch
         instance.delete()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="users.account.delete",
+            target=target_id,
+            institution=institution,
+            branch=branch,
+            metadata={
+                "email": email,
+                "role": role,
+            },
+        )
 
 
 class RegisterView(APIView):
@@ -145,6 +195,17 @@ class LoginView(APIView):
         user = serializer.validated_data["user"]
         tokens = serializer.validated_data["tokens"]
 
+        AuditService.log(
+            user=user,
+            request=request,
+            action="auth.login.success",
+            target=str(user.id),
+            metadata={
+                "email": user.email,
+                "role": user.role,
+            },
+        )
+
         return Response(
             {
                 "user": UserSerializer(user, context={"request": request}).data,
@@ -167,6 +228,17 @@ class LogoutView(APIView):
             RefreshToken(serializer.validated_data["refresh"]).blacklist()
         except Exception as exc:
             raise ValidationError({"refresh": "Invalid or expired refresh token."}) from exc
+
+        AuditService.log(
+            user=request.user,
+            request=request,
+            action="auth.logout.success",
+            target=str(request.user.id),
+            metadata={
+                "email": request.user.email,
+                "role": request.user.role,
+            },
+        )
 
         return Response({"detail": "Logout successful."}, status=status.HTTP_200_OK)
 
@@ -196,6 +268,16 @@ class MeView(RetrieveUpdateAPIView):
         serializer.save()
 
         logger.info("Updated FinCore profile user_id=%s", request.user.id)
+        AuditService.log(
+            user=request.user,
+            request=request,
+            action="auth.profile.update",
+            target=str(request.user.id),
+            metadata={
+                "email": request.user.email,
+                "role": request.user.role,
+            },
+        )
 
         return Response(
             UserSerializer(request.user, context={"request": request}).data,
@@ -318,6 +400,17 @@ class ChangePasswordView(APIView):
 
         user.set_password(new_password)
         user.save(update_fields=["password"])
+
+        AuditService.log(
+            user=user,
+            request=request,
+            action="auth.password.change",
+            target=str(user.id),
+            metadata={
+                "email": user.email,
+                "role": user.role,
+            },
+        )
 
         return Response(
             {"detail": "Password changed successfully."},

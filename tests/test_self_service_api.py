@@ -429,6 +429,39 @@ def test_self_service_loan_products_applications_loans_and_repayments_are_scoped
     assert own_application_detail.status_code == 200
     assert own_application_detail.data["product_name"] == "Business Growth"
 
+    eligibility_response = api.post(
+        "/api/v1/self-service/loan-applications/eligibility-check/",
+        {
+            "product": str(fixture["active_product"].id),
+            "amount": "250.00",
+            "term_months": 5,
+            "monthly_income": "1200.00",
+            "monthly_expenses": "250.00",
+            "existing_debt_payments": "0.00",
+        },
+        format="json",
+    )
+    assert eligibility_response.status_code == 200
+    assert isinstance(eligibility_response.data["checks"], list)
+
+    fixture["pending_loan"].eligibility_snapshot = {"eligible": True}
+    fixture["pending_loan"].save(update_fields=["eligibility_snapshot", "updated_at"])
+    normalized_detail = api.get(
+        f"/api/v1/self-service/loan-applications/{fixture['pending_loan'].id}/"
+    )
+    assert normalized_detail.status_code == 200
+    assert normalized_detail.data["eligibility_snapshot"]["eligible"] is True
+    assert normalized_detail.data["eligibility_snapshot"]["checks"] == []
+
+    withdraw_response = api.post(
+        f"/api/v1/self-service/loan-applications/{fixture['pending_loan'].id}/withdraw/",
+        {"reason": "Duplicate request"},
+        format="json",
+    )
+    assert withdraw_response.status_code == 200
+    assert withdraw_response.data["status"] == "withdrawn"
+    assert withdraw_response.data["withdrawal_reason"] == "Duplicate request"
+
     hidden_other_application = api.get(
         f"/api/v1/self-service/loan-applications/{fixture['other_loan'].id}/"
     )

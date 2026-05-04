@@ -17,6 +17,55 @@ from .services import LoanService
 ZERO_DECIMAL = Decimal("0.00")
 
 
+def normalize_loan_eligibility_snapshot(snapshot):
+    if not isinstance(snapshot, dict):
+        return None
+
+    raw_checks = snapshot.get("checks")
+    normalized_checks = []
+    if isinstance(raw_checks, list):
+        for check in raw_checks:
+            if not isinstance(check, dict) or "code" not in check:
+                continue
+
+            normalized_checks.append(
+                {
+                    "code": str(check.get("code", "")).strip(),
+                    "label": check.get("label"),
+                    "passed": bool(check.get("passed")),
+                    "message": check.get("message", ""),
+                    "value": check.get("value"),
+                    "threshold": check.get("threshold"),
+                }
+            )
+
+    raw_summary = snapshot.get("summary")
+    normalized_summary = raw_summary if isinstance(raw_summary, dict) else {}
+
+    raw_errors = snapshot.get("errors")
+    if isinstance(raw_errors, list):
+        normalized_errors = [str(item) for item in raw_errors if item not in (None, "")]
+    elif isinstance(raw_errors, str) and raw_errors.strip():
+        normalized_errors = [raw_errors.strip()]
+    else:
+        normalized_errors = []
+
+    if (
+        "eligible" not in snapshot
+        and not normalized_checks
+        and not normalized_summary
+        and not normalized_errors
+    ):
+        return None
+
+    return {
+        "eligible": bool(snapshot.get("eligible", False)),
+        "checks": normalized_checks,
+        "summary": normalized_summary,
+        "errors": normalized_errors,
+    }
+
+
 class LoanProductSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source="institution.name", read_only=True)
     application_count = serializers.SerializerMethodField()
@@ -448,6 +497,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
     schedule_count = serializers.SerializerMethodField()
     outstanding_balance = serializers.SerializerMethodField()
     next_due_date = serializers.SerializerMethodField()
+    eligibility_snapshot = serializers.SerializerMethodField()
 
     class Meta:
         model = LoanApplication
@@ -586,6 +636,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         if next_schedule is None:
             return None
         return next_schedule.due_date
+
+    def get_eligibility_snapshot(self, obj):
+        return normalize_loan_eligibility_snapshot(obj.eligibility_snapshot)
 
     def validate_purpose(self, value):
         return value.strip()

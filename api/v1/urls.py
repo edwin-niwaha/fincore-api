@@ -124,9 +124,19 @@ urlpatterns = [
         name="self-service-loan-applications",
     ),
     path(
+        "self-service/loan-applications/eligibility-check/",
+        SelfServiceLoanApplicationViewSet.as_view({"post": "eligibility_check"}),
+        name="self-service-loan-application-eligibility-check",
+    ),
+    path(
         "self-service/loan-applications/<uuid:pk>/",
         SelfServiceLoanApplicationViewSet.as_view({"get": "retrieve"}),
         name="self-service-loan-application-detail",
+    ),
+    path(
+        "self-service/loan-applications/<uuid:pk>/withdraw/",
+        SelfServiceLoanApplicationViewSet.as_view({"post": "withdraw"}),
+        name="self-service-loan-application-withdraw",
     ),
     path(
         "self-service/loans/",

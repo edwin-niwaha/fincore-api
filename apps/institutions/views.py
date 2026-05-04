@@ -3,6 +3,7 @@ from rest_framework import decorators, response, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
+from apps.audit.services import AuditService
 from apps.common.models import StatusChoices
 from apps.common.permissions import IsAdminRole
 from apps.users.models import CustomUser
@@ -80,10 +81,56 @@ class InstitutionViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Only super admins can create institutions.")
         return super().create(request, *args, **kwargs)
 
+    def perform_create(self, serializer):
+        institution = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="institutions.record.create",
+            target=str(institution.id),
+            institution=institution,
+            metadata={
+                "name": institution.name,
+                "code": institution.code,
+                "status": institution.status,
+            },
+        )
+
+    def perform_update(self, serializer):
+        institution = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="institutions.record.update",
+            target=str(institution.id),
+            institution=institution,
+            metadata={
+                "name": institution.name,
+                "code": institution.code,
+                "status": institution.status,
+            },
+        )
+
     def destroy(self, request, *args, **kwargs):
         if not is_super_admin(request.user):
             raise PermissionDenied("Only super admins can delete institutions.")
         return super().destroy(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        institution_id = str(instance.id)
+        institution_name = instance.name
+        institution_code = instance.code
+        instance.delete()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="institutions.record.delete",
+            target=institution_id,
+            metadata={
+                "name": institution_name,
+                "code": institution_code,
+            },
+        )
 
     @decorators.action(
         detail=False,
@@ -141,7 +188,20 @@ class BranchViewSet(viewsets.ModelViewSet):
         if is_institution_admin(user) and institution.pk != user.institution_id:
             raise PermissionDenied("You cannot manage branches outside your institution.")
 
-        serializer.save()
+        branch = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="branches.record.create",
+            target=str(branch.id),
+            institution=branch.institution,
+            branch=branch,
+            metadata={
+                "name": branch.name,
+                "code": branch.code,
+                "status": branch.status,
+            },
+        )
 
     def perform_update(self, serializer):
         institution = serializer.validated_data.get(
@@ -153,4 +213,35 @@ class BranchViewSet(viewsets.ModelViewSet):
         if is_institution_admin(user) and institution.pk != user.institution_id:
             raise PermissionDenied("You cannot manage branches outside your institution.")
 
-        serializer.save()
+        branch = serializer.save()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="branches.record.update",
+            target=str(branch.id),
+            institution=branch.institution,
+            branch=branch,
+            metadata={
+                "name": branch.name,
+                "code": branch.code,
+                "status": branch.status,
+            },
+        )
+
+    def perform_destroy(self, instance):
+        branch_id = str(instance.id)
+        branch_name = instance.name
+        branch_code = instance.code
+        institution = instance.institution
+        instance.delete()
+        AuditService.log(
+            user=self.request.user,
+            request=self.request,
+            action="branches.record.delete",
+            target=branch_id,
+            institution=institution,
+            metadata={
+                "name": branch_name,
+                "code": branch_code,
+            },
+        )

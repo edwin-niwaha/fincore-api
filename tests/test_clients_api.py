@@ -4,8 +4,17 @@ import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from apps.clients.models import Client, ClientMemberSequence
+from apps.audit.models import AuditLog
+from apps.clients.models import (
+    Client,
+    ClientMemberSequence,
+    ClientStatusChoices,
+    ClientStatusHistory,
+    KycStatusChoices,
+)
 from apps.institutions.models import Branch, Institution
+from apps.loans.models import LoanApplication, LoanProduct
+from apps.savings.models import SavingsAccount
 
 User = get_user_model()
 
@@ -71,6 +80,21 @@ def create_client(*, institution, branch, **overrides):
     }
     payload.update(overrides)
     return Client.objects.create(**payload)
+
+
+def create_loan_product(*, institution, **overrides):
+    payload = {
+        "institution": institution,
+        "name": "Emergency Loan",
+        "code": "emergency",
+        "min_amount": "100.00",
+        "max_amount": "2000.00",
+        "annual_interest_rate": "12.00",
+        "min_term_months": 1,
+        "max_term_months": 12,
+    }
+    payload.update(overrides)
+    return LoanProduct.objects.create(**payload)
 
 
 @pytest.mark.django_db
@@ -705,3 +729,180 @@ def test_member_number_sequence_is_branch_specific_and_monotonic():
     assert east_client.member_number == "EAST-000001"
     assert ClientMemberSequence.objects.get(branch=main_branch).last_value == 2
     assert ClientMemberSequence.objects.get(branch=east_branch).last_value == 1
+
+
+@pytest.mark.django_db
+def test_clients_default_to_pending_and_record_initial_status_history():
+    institution = Institution.objects.create(name="Pending SACCO", code="pending")
+    branch = Branch.objects.create(institution=institution, name="Main Branch", code="main")
+    staff_user = create_user(
+        email="super@pending.test",
+        username="pending-super",
+        role="super_admin",
+    )
+    api = auth_client(staff_user)
+
+    payload = client_payload(
+        institution=institution,
+        branch=branch,
+        first_name="Pending",
+        last_name="Member",
+        phone="0700000500",
+    )
+    payload.pop("status")
+
+    response = api.post("/api/v1/clients/", payload, format="json")
+    assert response.status_code == 201
+    assert response.data["status"] == ClientStatusChoices.PENDING
+    assert response.data["kyc_status"] == KycStatusChoices.PENDING
+    assert response.data["membership_type"] == "individual"
+
+    created_client = Client.objects.get(pk=response.data["id"])
+    history_rows = ClientStatusHistory.objects.filter(client=created_client)
+    assert history_rows.count() == 1
+    assert history_rows.first().to_status == ClientStatusChoices.PENDING
+
+    assert AuditLog.objects.filter(
+        action="client.create",
+        target=str(created_client.id),
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_client_kyc_verification_and_activation_workflow_records_history():
+    institution = Institution.objects.create(name="KYC SACCO", code="kyc")
+    branch = Branch.objects.create(institution=institution, name="Main Branch", code="main")
+    staff_user = create_user(
+        email="manager@kyc.test",
+        username="kyc-manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
+    api = auth_client(staff_user)
+
+    create_response = api.post(
+        "/api/v1/clients/",
+        {
+            **client_payload(
+                institution=institution,
+                branch=branch,
+                first_name="Grace",
+                last_name="Nabbanja",
+                phone="0700000600",
+            ),
+            "status": "pending",
+        },
+        format="json",
+    )
+    assert create_response.status_code == 201
+    client_id = create_response.data["id"]
+
+    blocked_activate = api.post(f"/api/v1/clients/{client_id}/activate/", {}, format="json")
+    assert blocked_activate.status_code == 400
+    assert "kyc-verified members can be activated" in blocked_activate.data["message"].lower()
+
+    verify_response = api.post(
+        f"/api/v1/clients/{client_id}/verify-kyc/",
+        {
+            "kyc_status": "verified",
+            "kyc_level": "level_2",
+            "risk_rating": "medium",
+            "verification_comments": "National ID and contact details verified.",
+        },
+        format="json",
+    )
+    assert verify_response.status_code == 200
+    assert verify_response.data["kyc_status"] == "verified"
+    assert verify_response.data["kyc_level"] == "level_2"
+    assert verify_response.data["risk_rating"] == "medium"
+    assert verify_response.data["verified_by"] == staff_user.id
+    assert verify_response.data["verified_at"] is not None
+
+    activate_response = api.post(f"/api/v1/clients/{client_id}/activate/", {}, format="json")
+    assert activate_response.status_code == 200
+    assert activate_response.data["status"] == "active"
+
+    client = Client.objects.get(pk=client_id)
+    history_rows = list(
+        ClientStatusHistory.objects.filter(client=client).order_by("created_at")
+    )
+    assert [row.to_status for row in history_rows] == [
+        ClientStatusChoices.PENDING,
+        ClientStatusChoices.ACTIVE,
+    ]
+
+    audit_actions = list(
+        AuditLog.objects.filter(target=str(client.id)).values_list("action", flat=True)
+    )
+    assert "client.verify_kyc" in audit_actions
+    assert "client.activate" in audit_actions
+
+
+@pytest.mark.django_db
+def test_client_close_requires_settled_savings_and_loans():
+    institution = Institution.objects.create(name="Closure SACCO", code="closure")
+    branch = Branch.objects.create(institution=institution, name="Main Branch", code="main")
+    staff_user = create_user(
+        email="manager@closure.test",
+        username="closure-manager",
+        role="branch_manager",
+        institution=institution,
+        branch=branch,
+    )
+    api = auth_client(staff_user)
+
+    client = create_client(
+        institution=institution,
+        branch=branch,
+        first_name="Closing",
+        last_name="Member",
+        phone="0700000700",
+        status=ClientStatusChoices.ACTIVE,
+        kyc_status=KycStatusChoices.VERIFIED,
+    )
+    SavingsAccount.objects.create(
+        client=client,
+        status="active",
+        balance="10.00",
+    )
+
+    savings_blocked = api.post(
+        f"/api/v1/clients/{client.id}/close/",
+        {"reason": "Requested closure"},
+        format="json",
+    )
+    assert savings_blocked.status_code == 400
+    assert "savings accounts" in savings_blocked.data["message"].lower()
+
+    client.savings_accounts.update(status="closed", balance="0.00")
+    loan_product = create_loan_product(institution=institution, code="closure-loan")
+    LoanApplication.objects.create(
+        client=client,
+        product=loan_product,
+        amount="500.00",
+        term_months=6,
+        status=LoanApplication.Status.SUBMITTED,
+    )
+
+    loan_blocked = api.post(
+        f"/api/v1/clients/{client.id}/close/",
+        {"reason": "Requested closure"},
+        format="json",
+    )
+    assert loan_blocked.status_code == 400
+    assert "loan records" in loan_blocked.data["message"].lower()
+
+    client.loan_applications.update(status=LoanApplication.Status.CLOSED)
+    close_response = api.post(
+        f"/api/v1/clients/{client.id}/close/",
+        {"reason": "Requested closure"},
+        format="json",
+    )
+    assert close_response.status_code == 200
+    assert close_response.data["status"] == ClientStatusChoices.CLOSED
+
+    history_row = ClientStatusHistory.objects.filter(client=client).order_by("-created_at").first()
+    assert history_row is not None
+    assert history_row.to_status == ClientStatusChoices.CLOSED
+    assert history_row.reason == "Requested closure"
